@@ -781,7 +781,7 @@ function InvoicePreview({
 
   const handleSendLINE = () => {
     const text = encodeURIComponent(buildMessageText());
-    window.open(`https://line.me/R/share?text=${text}`, "_blank");
+    window.location.href = `line://msg/text/${text}`;
   };
 
   const handleSendEmail = () => {
