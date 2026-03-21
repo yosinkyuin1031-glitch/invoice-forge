@@ -750,6 +750,47 @@ function InvoicePreview({
     window.print();
   };
 
+  const buildMessageText = () => {
+    const items = invoice.items
+      .map((item) => `・${item.name}　${item.quantity}点 × ¥${item.unitPrice.toLocaleString()} = ¥${(item.quantity * item.unitPrice).toLocaleString()}`)
+      .join("\n");
+    const total = calcTotal(invoice.items);
+    const subtotal = calcSubtotal(invoice.items);
+    const tax = calcTax(invoice.items);
+
+    let msg = `【請求書】${invoice.invoiceNumber}\n`;
+    msg += `発行日: ${invoice.issueDate}\n`;
+    msg += `支払期限: ${invoice.dueDate}\n\n`;
+    msg += `${invoice.clientName} 様\n\n`;
+    msg += `下記の通りご請求申し上げます。\n\n`;
+    msg += `━━━ 明細 ━━━\n${items}\n\n`;
+    msg += `小計: ¥${subtotal.toLocaleString()}\n`;
+    msg += `消費税: ¥${tax.toLocaleString()}\n`;
+    msg += `合計: ¥${total.toLocaleString()}\n`;
+    if (bankInfo) {
+      msg += `\n━━━ 振込先 ━━━\n${bankInfo}\n`;
+    }
+    if (invoice.notes) {
+      msg += `\n━━━ 備考 ━━━\n${invoice.notes}\n`;
+    }
+    msg += `\n${invoice.clinicName}`;
+    if (invoice.clinicPhone) msg += `\nTEL: ${invoice.clinicPhone}`;
+    if (invoice.clinicEmail) msg += `\nEmail: ${invoice.clinicEmail}`;
+    return msg;
+  };
+
+  const handleSendLINE = () => {
+    const text = encodeURIComponent(buildMessageText());
+    window.open(`https://line.me/R/share?text=${text}`, "_blank");
+  };
+
+  const handleSendEmail = () => {
+    const subject = encodeURIComponent(`請求書 ${invoice.invoiceNumber}（${invoice.clinicName}）`);
+    const body = encodeURIComponent(buildMessageText());
+    const to = invoice.clientEmail || "";
+    window.open(`mailto:${to}?subject=${subject}&body=${body}`, "_self");
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
       {/* Controls (hidden on print) */}
@@ -758,7 +799,7 @@ function InvoicePreview({
           <button onClick={onBack} className="text-sm text-gray-600 hover:text-gray-800">
             &larr; 一覧へ
           </button>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
             <select
               value={invoice.status}
               onChange={(e) => onStatusChange(e.target.value as Invoice["status"])}
@@ -779,6 +820,18 @@ function InvoicePreview({
               className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
             >
               PDF / 印刷
+            </button>
+            <button
+              onClick={handleSendLINE}
+              className="px-4 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium"
+            >
+              LINEで送る
+            </button>
+            <button
+              onClick={handleSendEmail}
+              className="px-4 py-1.5 text-xs bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium"
+            >
+              メールで送る
             </button>
           </div>
         </div>
