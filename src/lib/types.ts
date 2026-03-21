@@ -13,14 +13,17 @@ export interface Invoice {
   dueDate: string;
   // 発行元（院）情報
   clinicName: string;
+  clinicZip: string;
   clinicAddress: string;
   clinicPhone: string;
   clinicEmail: string;
   clinicLogo: string; // base64
   clinicStamp: string; // base64 印影
-  // 宛先（患者）情報
+  // 宛先情報
   clientName: string;
+  clientZip: string;
   clientAddress: string;
+  clientEmail: string;
   // 明細
   items: InvoiceItem[];
   // 備考
@@ -40,6 +43,7 @@ export interface MenuTemplate {
 
 export interface ClinicSettings {
   clinicName: string;
+  clinicZip: string;
   clinicAddress: string;
   clinicPhone: string;
   clinicEmail: string;
@@ -52,6 +56,7 @@ export interface ClinicSettings {
 
 export const DEFAULT_SETTINGS: ClinicSettings = {
   clinicName: "大口神経整体院",
+  clinicZip: "",
   clinicAddress: "大阪市住吉区長居",
   clinicPhone: "070-8498-2968",
   clinicEmail: "",

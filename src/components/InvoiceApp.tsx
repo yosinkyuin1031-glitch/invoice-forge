@@ -46,15 +46,18 @@ export default function InvoiceApp() {
       id: `inv-${Date.now()}`,
       invoiceNumber: generateInvoiceNumber(),
       issueDate: now.toISOString().split("T")[0],
-      dueDate: new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0],
+      dueDate: new Date(now.getTime() + 7 * 86400000).toISOString().split("T")[0],
       clinicName: settings.clinicName,
+      clinicZip: settings.clinicZip,
       clinicAddress: settings.clinicAddress,
       clinicPhone: settings.clinicPhone,
       clinicEmail: settings.clinicEmail,
       clinicLogo: settings.clinicLogo,
       clinicStamp: settings.clinicStamp,
       clientName: "",
+      clientZip: "",
       clientAddress: "",
+      clientEmail: "",
       items: [{ id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: 0.1 }],
       notes: "",
       createdAt: now.toISOString(),
@@ -101,7 +104,7 @@ export default function InvoiceApp() {
       id: `inv-${Date.now()}`,
       invoiceNumber: generateInvoiceNumber(),
       issueDate: new Date().toISOString().split("T")[0],
-      dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+      dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
       status: "draft",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -472,29 +475,108 @@ function InvoiceEditor({
           </div>
         </div>
 
-        {/* Client Info */}
-        <div className="bg-white rounded-xl border p-4">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">請求先</h3>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-gray-500">顧客名</label>
-              <input
-                type="text"
-                value={invoice.clientName}
-                onChange={(e) => updateField("clientName", e.target.value)}
-                placeholder="例: 山田 太郎 様"
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
+        {/* Client & Clinic Info - 2 column */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Client Info (送信先) */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="text-sm font-bold text-gray-700 mb-3">送信先（請求先）</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500">宛名</label>
+                <input
+                  type="text"
+                  value={invoice.clientName}
+                  onChange={(e) => updateField("clientName", e.target.value)}
+                  placeholder="例: 山田 太郎 様"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">郵便番号</label>
+                <input
+                  type="text"
+                  value={invoice.clientZip}
+                  onChange={(e) => updateField("clientZip", e.target.value)}
+                  placeholder="例: 〒123-4567"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">住所</label>
+                <input
+                  type="text"
+                  value={invoice.clientAddress}
+                  onChange={(e) => updateField("clientAddress", e.target.value)}
+                  placeholder="例: 東京都渋谷区..."
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">メールアドレス</label>
+                <input
+                  type="email"
+                  value={invoice.clientEmail}
+                  onChange={(e) => updateField("clientEmail", e.target.value)}
+                  placeholder="例: yamada@example.com"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-gray-500">住所</label>
-              <input
-                type="text"
-                value={invoice.clientAddress}
-                onChange={(e) => updateField("clientAddress", e.target.value)}
-                placeholder="例: 東京都渋谷区..."
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
+          </div>
+
+          {/* Clinic Info (送信元) */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="text-sm font-bold text-gray-700 mb-3">送信元（発行元）</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500">院名・会社名</label>
+                <input
+                  type="text"
+                  value={invoice.clinicName}
+                  onChange={(e) => updateField("clinicName", e.target.value)}
+                  placeholder="例: 大口神経整体院"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">郵便番号</label>
+                <input
+                  type="text"
+                  value={invoice.clinicZip}
+                  onChange={(e) => updateField("clinicZip", e.target.value)}
+                  placeholder="例: 〒558-0003"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">住所</label>
+                <input
+                  type="text"
+                  value={invoice.clinicAddress}
+                  onChange={(e) => updateField("clinicAddress", e.target.value)}
+                  placeholder="例: 大阪市住吉区長居..."
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">電話番号</label>
+                <input
+                  type="tel"
+                  value={invoice.clinicPhone}
+                  onChange={(e) => updateField("clinicPhone", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">メールアドレス</label>
+                <input
+                  type="email"
+                  value={invoice.clinicEmail}
+                  onChange={(e) => updateField("clinicEmail", e.target.value)}
+                  placeholder="例: info@example.com"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -714,15 +796,18 @@ function InvoicePreview({
             <h1 className="text-2xl font-bold text-gray-800 tracking-widest">請 求 書</h1>
           </div>
 
-          {/* Top Section */}
-          <div className="flex justify-between mb-8">
-            {/* Client */}
-            <div className="flex-1">
+          {/* Top Section - 2 column */}
+          <div className="grid grid-cols-2 gap-8 mb-8">
+            {/* Client (送信先) */}
+            <div>
+              <p className="text-xs text-gray-400 mb-1">送信先</p>
               <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
                 <p className="text-lg font-bold">{invoice.clientName || "（宛名未入力）"}</p>
               </div>
-              <p className="text-xs text-gray-500">{invoice.clientAddress}</p>
-              <div className="mt-6 p-4 bg-blue-50 rounded-lg inline-block">
+              {invoice.clientZip && <p className="text-xs text-gray-500">{invoice.clientZip}</p>}
+              {invoice.clientAddress && <p className="text-xs text-gray-500">{invoice.clientAddress}</p>}
+              {invoice.clientEmail && <p className="text-xs text-gray-500">{invoice.clientEmail}</p>}
+              <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
                 <p className="text-sm text-gray-600">ご請求金額</p>
                 <p className="text-2xl font-bold text-blue-700">
                   {formatCurrency(calcTotal(invoice.items))}
@@ -730,8 +815,9 @@ function InvoicePreview({
               </div>
             </div>
 
-            {/* Clinic */}
+            {/* Clinic (送信元) */}
             <div className="text-right">
+              <p className="text-xs text-gray-400 mb-1">送信元</p>
               {invoice.clinicLogo && (
                 <img
                   src={invoice.clinicLogo}
@@ -740,9 +826,10 @@ function InvoicePreview({
                 />
               )}
               <p className="font-bold text-sm">{invoice.clinicName}</p>
-              <p className="text-xs text-gray-500">{invoice.clinicAddress}</p>
-              <p className="text-xs text-gray-500">{invoice.clinicPhone}</p>
-              <p className="text-xs text-gray-500">{invoice.clinicEmail}</p>
+              {invoice.clinicZip && <p className="text-xs text-gray-500">{invoice.clinicZip}</p>}
+              {invoice.clinicAddress && <p className="text-xs text-gray-500">{invoice.clinicAddress}</p>}
+              {invoice.clinicPhone && <p className="text-xs text-gray-500">{invoice.clinicPhone}</p>}
+              {invoice.clinicEmail && <p className="text-xs text-gray-500">{invoice.clinicEmail}</p>}
               {invoice.clinicStamp && (
                 <img
                   src={invoice.clinicStamp}
@@ -918,14 +1005,26 @@ function SettingsView({
                 className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
               />
             </div>
-            <div>
-              <label className="text-xs text-gray-500">住所</label>
-              <input
-                type="text"
-                value={localSettings.clinicAddress}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicAddress: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-gray-500">郵便番号</label>
+                <input
+                  type="text"
+                  value={localSettings.clinicZip}
+                  onChange={(e) => setLocalSettings((p) => ({ ...p, clinicZip: e.target.value }))}
+                  placeholder="例: 〒558-0003"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-gray-500">住所</label>
+                <input
+                  type="text"
+                  value={localSettings.clinicAddress}
+                  onChange={(e) => setLocalSettings((p) => ({ ...p, clinicAddress: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
