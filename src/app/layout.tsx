@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "InvoiceForge - 請求書作成",
-  description: "治療院・整体院向けの請求書作成ツール。PDF出力・テンプレート・自動採番対応。",
+  title: "InvoiceForge - BtoB請求書管理",
+  description: "BtoB取引・物販向けの請求書作成管理ツール。取引先管理・商品マスター・売上分析・PDF出力対応。",
 };
 
 export default function RootLayout({

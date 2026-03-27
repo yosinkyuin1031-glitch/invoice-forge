@@ -3,7 +3,7 @@ export interface InvoiceItem {
   name: string;
   quantity: number;
   unitPrice: number;
-  taxRate: number; // 0.1 or 0.08
+  taxRate: number; // 0.1 or 0.08 or 0
 }
 
 export interface Invoice {
@@ -11,7 +11,7 @@ export interface Invoice {
   invoiceNumber: string;
   issueDate: string;
   dueDate: string;
-  // 発行元（院）情報
+  // 発行元情報
   clinicName: string;
   clinicZip: string;
   clinicAddress: string;
@@ -20,6 +20,7 @@ export interface Invoice {
   clinicLogo: string; // base64
   clinicStamp: string; // base64 印影
   // 宛先情報
+  clientId?: string;
   clientName: string;
   clientZip: string;
   clientAddress: string;
@@ -34,11 +35,28 @@ export interface Invoice {
   status: "draft" | "sent" | "paid";
 }
 
-export interface MenuTemplate {
+export interface Client {
+  id: string;
+  companyName: string;
+  contactName: string;
+  zip: string;
+  address: string;
+  phone: string;
+  email: string;
+  memo: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Product {
   id: string;
   name: string;
   unitPrice: number;
   taxRate: number;
+  category: "product" | "service" | "other";
+  memo: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ClinicSettings {
@@ -55,10 +73,10 @@ export interface ClinicSettings {
 }
 
 export const DEFAULT_SETTINGS: ClinicSettings = {
-  clinicName: "大口神経整体院",
+  clinicName: "",
   clinicZip: "",
-  clinicAddress: "大阪市住吉区長居",
-  clinicPhone: "070-8498-2968",
+  clinicAddress: "",
+  clinicPhone: "",
   clinicEmail: "",
   clinicLogo: "",
   clinicStamp: "",
@@ -67,6 +85,12 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
   bankInfo: "",
 };
 
-export const DEFAULT_TEMPLATES: MenuTemplate[] = [
-  { id: "t1", name: "アプリ作成", unitPrice: 0, taxRate: 0.1 },
-];
+// Legacy type kept for compatibility
+export interface MenuTemplate {
+  id: string;
+  name: string;
+  unitPrice: number;
+  taxRate: number;
+}
+
+export const DEFAULT_TEMPLATES: MenuTemplate[] = [];

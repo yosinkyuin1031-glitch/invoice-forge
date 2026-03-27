@@ -1,78 +1,392 @@
-import { Invoice, ClinicSettings, MenuTemplate, DEFAULT_SETTINGS, DEFAULT_TEMPLATES } from "./types";
+import { supabase } from "./supabase";
+import { Invoice, InvoiceItem, ClinicSettings, Client, Product, DEFAULT_SETTINGS } from "./types";
 
-const KEYS = {
-  invoices: "invoiceforge_invoices",
-  settings: "invoiceforge_settings",
-  templates: "invoiceforge_templates",
-};
-
-// Invoices
-export function getInvoices(): Invoice[] {
-  try {
-    const data = localStorage.getItem(KEYS.invoices);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+// ===== AUTH =====
+export async function signUp(email: string, password: string) {
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
 }
 
-export function saveInvoices(invoices: Invoice[]) {
-  localStorage.setItem(KEYS.invoices, JSON.stringify(invoices));
+export async function signIn(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
 }
 
-export function getInvoice(id: string): Invoice | undefined {
-  return getInvoices().find((inv) => inv.id === id);
+export async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
 }
 
-export function saveInvoice(invoice: Invoice) {
-  const invoices = getInvoices();
-  const idx = invoices.findIndex((inv) => inv.id === invoice.id);
-  if (idx >= 0) {
-    invoices[idx] = invoice;
+export async function getUser() {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+export function onAuthChange(callback: (user: { id: string; email?: string } | null) => void) {
+  return supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session?.user ?? null);
+  });
+}
+
+// ===== INVOICES =====
+export async function getInvoices(): Promise<Invoice[]> {
+  const { data: invoices, error } = await supabase
+    .from("inv_invoices")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  if (!invoices || invoices.length === 0) return [];
+
+  const invoiceIds = invoices.map((inv) => inv.id);
+  const { data: items, error: itemsError } = await supabase
+    .from("inv_invoice_items")
+    .select("*")
+    .in("invoice_id", invoiceIds)
+    .order("sort_order", { ascending: true });
+  if (itemsError) throw itemsError;
+
+  return invoices.map((inv) => ({
+    id: inv.id,
+    invoiceNumber: inv.invoice_number,
+    issueDate: inv.issue_date,
+    dueDate: inv.due_date,
+    clinicName: inv.clinic_name,
+    clinicZip: inv.clinic_zip,
+    clinicAddress: inv.clinic_address,
+    clinicPhone: inv.clinic_phone,
+    clinicEmail: inv.clinic_email,
+    clinicLogo: inv.clinic_logo,
+    clinicStamp: inv.clinic_stamp,
+    clientId: inv.client_id || undefined,
+    clientName: inv.client_name,
+    clientZip: inv.client_zip,
+    clientAddress: inv.client_address,
+    clientEmail: inv.client_email,
+    items: (items || [])
+      .filter((it) => it.invoice_id === inv.id)
+      .map((it) => ({
+        id: it.id,
+        name: it.name,
+        quantity: it.quantity,
+        unitPrice: it.unit_price,
+        taxRate: Number(it.tax_rate),
+      })),
+    notes: inv.notes,
+    createdAt: inv.created_at,
+    updatedAt: inv.updated_at,
+    status: inv.status as Invoice["status"],
+  }));
+}
+
+export async function saveInvoice(invoice: Invoice, userId: string): Promise<Invoice> {
+  const now = new Date().toISOString();
+  const isNew = !invoice.id || invoice.id.startsWith("inv-");
+
+  if (isNew) {
+    // Insert invoice
+    const { data: inv, error } = await supabase
+      .from("inv_invoices")
+      .insert({
+        user_id: userId,
+        invoice_number: invoice.invoiceNumber,
+        issue_date: invoice.issueDate,
+        due_date: invoice.dueDate,
+        status: invoice.status,
+        client_id: invoice.clientId || null,
+        client_name: invoice.clientName,
+        client_zip: invoice.clientZip,
+        client_address: invoice.clientAddress,
+        client_email: invoice.clientEmail,
+        clinic_name: invoice.clinicName,
+        clinic_zip: invoice.clinicZip,
+        clinic_address: invoice.clinicAddress,
+        clinic_phone: invoice.clinicPhone,
+        clinic_email: invoice.clinicEmail,
+        clinic_logo: invoice.clinicLogo,
+        clinic_stamp: invoice.clinicStamp,
+        notes: invoice.notes,
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    // Insert items
+    if (invoice.items.length > 0) {
+      const { error: itemsError } = await supabase.from("inv_invoice_items").insert(
+        invoice.items.map((item, idx) => ({
+          invoice_id: inv.id,
+          name: item.name,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          tax_rate: item.taxRate,
+          sort_order: idx,
+        }))
+      );
+      if (itemsError) throw itemsError;
+    }
+
+    return { ...invoice, id: inv.id };
   } else {
-    invoices.unshift(invoice);
+    // Update invoice
+    const { error } = await supabase
+      .from("inv_invoices")
+      .update({
+        invoice_number: invoice.invoiceNumber,
+        issue_date: invoice.issueDate,
+        due_date: invoice.dueDate,
+        status: invoice.status,
+        client_id: invoice.clientId || null,
+        client_name: invoice.clientName,
+        client_zip: invoice.clientZip,
+        client_address: invoice.clientAddress,
+        client_email: invoice.clientEmail,
+        clinic_name: invoice.clinicName,
+        clinic_zip: invoice.clinicZip,
+        clinic_address: invoice.clinicAddress,
+        clinic_phone: invoice.clinicPhone,
+        clinic_email: invoice.clinicEmail,
+        clinic_logo: invoice.clinicLogo,
+        clinic_stamp: invoice.clinicStamp,
+        notes: invoice.notes,
+        updated_at: now,
+      })
+      .eq("id", invoice.id);
+    if (error) throw error;
+
+    // Delete old items and re-insert
+    await supabase.from("inv_invoice_items").delete().eq("invoice_id", invoice.id);
+    if (invoice.items.length > 0) {
+      const { error: itemsError } = await supabase.from("inv_invoice_items").insert(
+        invoice.items.map((item, idx) => ({
+          invoice_id: invoice.id,
+          name: item.name,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          tax_rate: item.taxRate,
+          sort_order: idx,
+        }))
+      );
+      if (itemsError) throw itemsError;
+    }
+
+    return invoice;
   }
-  saveInvoices(invoices);
 }
 
-export function deleteInvoice(id: string) {
-  saveInvoices(getInvoices().filter((inv) => inv.id !== id));
+export async function deleteInvoice(id: string) {
+  const { error } = await supabase.from("inv_invoices").delete().eq("id", id);
+  if (error) throw error;
 }
 
-// Settings
-export function getSettings(): ClinicSettings {
-  try {
-    const data = localStorage.getItem(KEYS.settings);
-    return data ? { ...DEFAULT_SETTINGS, ...JSON.parse(data) } : { ...DEFAULT_SETTINGS };
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
+// ===== SETTINGS =====
+export async function getSettings(userId: string): Promise<ClinicSettings> {
+  const { data, error } = await supabase
+    .from("inv_settings")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+  if (error || !data) return { ...DEFAULT_SETTINGS };
+  return {
+    clinicName: data.clinic_name,
+    clinicZip: data.clinic_zip,
+    clinicAddress: data.clinic_address,
+    clinicPhone: data.clinic_phone,
+    clinicEmail: data.clinic_email,
+    clinicLogo: data.clinic_logo,
+    clinicStamp: data.clinic_stamp,
+    nextInvoiceNumber: data.next_invoice_number,
+    invoicePrefix: data.invoice_prefix,
+    bankInfo: data.bank_info,
+  };
 }
 
-export function saveSettings(settings: ClinicSettings) {
-  localStorage.setItem(KEYS.settings, JSON.stringify(settings));
+export async function saveSettings(settings: ClinicSettings, userId: string) {
+  const { error } = await supabase
+    .from("inv_settings")
+    .upsert({
+      user_id: userId,
+      clinic_name: settings.clinicName,
+      clinic_zip: settings.clinicZip,
+      clinic_address: settings.clinicAddress,
+      clinic_phone: settings.clinicPhone,
+      clinic_email: settings.clinicEmail,
+      clinic_logo: settings.clinicLogo,
+      clinic_stamp: settings.clinicStamp,
+      next_invoice_number: settings.nextInvoiceNumber,
+      invoice_prefix: settings.invoicePrefix,
+      bank_info: settings.bankInfo,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+  if (error) throw error;
 }
 
-// Templates
-export function getTemplates(): MenuTemplate[] {
-  try {
-    const data = localStorage.getItem(KEYS.templates);
-    return data ? JSON.parse(data) : [...DEFAULT_TEMPLATES];
-  } catch {
-    return [...DEFAULT_TEMPLATES];
-  }
-}
-
-export function saveTemplates(templates: MenuTemplate[]) {
-  localStorage.setItem(KEYS.templates, JSON.stringify(templates));
-}
-
-// Invoice number generation
-export function generateInvoiceNumber(): string {
-  const settings = getSettings();
+export async function generateInvoiceNumber(userId: string): Promise<string> {
+  const settings = await getSettings(userId);
   const num = settings.nextInvoiceNumber;
   const padded = String(num).padStart(4, "0");
   settings.nextInvoiceNumber = num + 1;
-  saveSettings(settings);
+  await saveSettings(settings, userId);
   return `${settings.invoicePrefix}${padded}`;
+}
+
+// ===== CLIENTS =====
+export async function getClients(): Promise<Client[]> {
+  const { data, error } = await supabase
+    .from("inv_clients")
+    .select("*")
+    .order("company_name", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((c) => ({
+    id: c.id,
+    companyName: c.company_name,
+    contactName: c.contact_name,
+    zip: c.zip,
+    address: c.address,
+    phone: c.phone,
+    email: c.email,
+    memo: c.memo,
+    createdAt: c.created_at,
+    updatedAt: c.updated_at,
+  }));
+}
+
+export async function saveClient(client: Partial<Client> & { companyName: string }, userId: string): Promise<Client> {
+  const now = new Date().toISOString();
+  if (client.id) {
+    const { data, error } = await supabase
+      .from("inv_clients")
+      .update({
+        company_name: client.companyName,
+        contact_name: client.contactName || "",
+        zip: client.zip || "",
+        address: client.address || "",
+        phone: client.phone || "",
+        email: client.email || "",
+        memo: client.memo || "",
+        updated_at: now,
+      })
+      .eq("id", client.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return mapClient(data);
+  } else {
+    const { data, error } = await supabase
+      .from("inv_clients")
+      .insert({
+        user_id: userId,
+        company_name: client.companyName,
+        contact_name: client.contactName || "",
+        zip: client.zip || "",
+        address: client.address || "",
+        phone: client.phone || "",
+        email: client.email || "",
+        memo: client.memo || "",
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return mapClient(data);
+  }
+}
+
+export async function deleteClient(id: string) {
+  const { error } = await supabase.from("inv_clients").delete().eq("id", id);
+  if (error) throw error;
+}
+
+function mapClient(c: Record<string, unknown>): Client {
+  return {
+    id: c.id as string,
+    companyName: c.company_name as string,
+    contactName: c.contact_name as string,
+    zip: c.zip as string,
+    address: c.address as string,
+    phone: c.phone as string,
+    email: c.email as string,
+    memo: c.memo as string,
+    createdAt: c.created_at as string,
+    updatedAt: c.updated_at as string,
+  };
+}
+
+// ===== PRODUCTS =====
+export async function getProducts(): Promise<Product[]> {
+  const { data, error } = await supabase
+    .from("inv_products")
+    .select("*")
+    .order("name", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    unitPrice: p.unit_price,
+    taxRate: Number(p.tax_rate),
+    category: p.category as Product["category"],
+    memo: p.memo,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+  }));
+}
+
+export async function saveProduct(product: Partial<Product> & { name: string }, userId: string): Promise<Product> {
+  const now = new Date().toISOString();
+  if (product.id) {
+    const { data, error } = await supabase
+      .from("inv_products")
+      .update({
+        name: product.name,
+        unit_price: product.unitPrice || 0,
+        tax_rate: product.taxRate ?? 0.1,
+        category: product.category || "service",
+        memo: product.memo || "",
+        updated_at: now,
+      })
+      .eq("id", product.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return mapProduct(data);
+  } else {
+    const { data, error } = await supabase
+      .from("inv_products")
+      .insert({
+        user_id: userId,
+        name: product.name,
+        unit_price: product.unitPrice || 0,
+        tax_rate: product.taxRate ?? 0.1,
+        category: product.category || "service",
+        memo: product.memo || "",
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return mapProduct(data);
+  }
+}
+
+export async function deleteProduct(id: string) {
+  const { error } = await supabase.from("inv_products").delete().eq("id", id);
+  if (error) throw error;
+}
+
+function mapProduct(p: Record<string, unknown>): Product {
+  return {
+    id: p.id as string,
+    name: p.name as string,
+    unitPrice: p.unit_price as number,
+    taxRate: Number(p.tax_rate),
+    category: p.category as Product["category"],
+    memo: p.memo as string,
+    createdAt: p.created_at as string,
+    updatedAt: p.updated_at as string,
+  };
 }

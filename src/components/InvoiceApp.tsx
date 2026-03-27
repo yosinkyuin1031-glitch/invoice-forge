@@ -5,48 +5,105 @@ import {
   Invoice,
   InvoiceItem,
   ClinicSettings,
-  MenuTemplate,
+  Client,
+  Product,
   DEFAULT_SETTINGS,
 } from "@/lib/types";
 import {
-  getInvoices,
-  saveInvoice,
-  deleteInvoice,
-  getSettings,
-  saveSettings,
-  getTemplates,
-  saveTemplates,
+  signIn,
+  signUp,
+  signOut,
+  getUser,
+  onAuthChange,
+  getInvoices as fetchInvoices,
+  saveInvoice as persistInvoice,
+  deleteInvoice as removeInvoice,
+  getSettings as fetchSettings,
+  saveSettings as persistSettings,
   generateInvoiceNumber,
+  getClients as fetchClients,
+  saveClient as persistClient,
+  deleteClient as removeClient,
+  getProducts as fetchProducts,
+  saveProduct as persistProduct,
+  deleteProduct as removeProduct,
 } from "@/lib/storage";
 
-type View = "list" | "create" | "edit" | "preview" | "settings";
+type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics";
 
+// ===== MAIN APP =====
 export default function InvoiceApp() {
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState<View>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [settings, setSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
-  const [templates, setTemplates] = useState<MenuTemplate[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [currentInvoice, setCurrentInvoice] = useState<Invoice | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "sent" | "paid">("all");
   const [loaded, setLoaded] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Load data
+  // Auth check
   useEffect(() => {
-    setInvoices(getInvoices());
-    setSettings(getSettings());
-    setTemplates(getTemplates());
-    setLoaded(true);
+    getUser().then((u) => {
+      setUser(u ? { id: u.id, email: u.email } : null);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = onAuthChange((u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
+  // Load data when user is authenticated
+  useEffect(() => {
+    if (!user) {
+      setLoaded(false);
+      return;
+    }
+    Promise.all([
+      fetchInvoices(),
+      fetchSettings(user.id),
+      fetchClients(),
+      fetchProducts(),
+    ]).then(([invs, sets, cls, prds]) => {
+      setInvoices(invs);
+      setSettings(sets);
+      setClients(cls);
+      setProducts(prds);
+      setLoaded(true);
+    }).catch((err) => {
+      console.error("Failed to load data:", err);
+      setLoaded(true);
+    });
+  }, [user]);
+
+  const reloadData = useCallback(async () => {
+    if (!user) return;
+    const [invs, cls, prds] = await Promise.all([
+      fetchInvoices(),
+      fetchClients(),
+      fetchProducts(),
+    ]);
+    setInvoices(invs);
+    setClients(cls);
+    setProducts(prds);
+  }, [user]);
+
   // Create new invoice
-  const handleNewInvoice = useCallback(() => {
+  const handleNewInvoice = useCallback(async () => {
+    if (!user) return;
     const now = new Date();
+    const invoiceNumber = await generateInvoiceNumber(user.id);
     const invoice: Invoice = {
       id: `inv-${Date.now()}`,
-      invoiceNumber: generateInvoiceNumber(),
+      invoiceNumber,
       issueDate: now.toISOString().split("T")[0],
-      dueDate: new Date(now.getTime() + 7 * 86400000).toISOString().split("T")[0],
+      dueDate: new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0],
       clinicName: settings.clinicName,
       clinicZip: settings.clinicZip,
       clinicAddress: settings.clinicAddress,
@@ -66,53 +123,50 @@ export default function InvoiceApp() {
     };
     setCurrentInvoice(invoice);
     setView("create");
-  }, [settings]);
+  }, [user, settings]);
 
-  // Edit invoice
   const handleEditInvoice = useCallback((inv: Invoice) => {
     setCurrentInvoice({ ...inv, items: inv.items.map((i) => ({ ...i })) });
     setView("edit");
   }, []);
 
-  // Preview invoice
   const handlePreviewInvoice = useCallback((inv: Invoice) => {
     setCurrentInvoice(inv);
     setView("preview");
   }, []);
 
-  // Save invoice
-  const handleSaveInvoice = useCallback(() => {
-    if (!currentInvoice) return;
+  const handleSaveInvoice = useCallback(async () => {
+    if (!currentInvoice || !user) return;
     const updated = { ...currentInvoice, updatedAt: new Date().toISOString() };
-    saveInvoice(updated);
-    setInvoices(getInvoices());
+    await persistInvoice(updated, user.id);
+    await reloadData();
     setView("list");
     setCurrentInvoice(null);
-  }, [currentInvoice]);
+  }, [currentInvoice, user, reloadData]);
 
-  // Delete invoice
-  const handleDeleteInvoice = useCallback((id: string) => {
-    if (!confirm("この請求書を削除しますか？")) return;
-    deleteInvoice(id);
-    setInvoices(getInvoices());
-  }, []);
+  const handleDeleteInvoice = useCallback(async (id: string) => {
+    if (!confirm("この請求書を削除しますか?")) return;
+    await removeInvoice(id);
+    await reloadData();
+  }, [reloadData]);
 
-  // Duplicate invoice
-  const handleDuplicateInvoice = useCallback((inv: Invoice) => {
+  const handleDuplicateInvoice = useCallback(async (inv: Invoice) => {
+    if (!user) return;
+    const invoiceNumber = await generateInvoiceNumber(user.id);
     const newInv: Invoice = {
       ...inv,
       id: `inv-${Date.now()}`,
-      invoiceNumber: generateInvoiceNumber(),
+      invoiceNumber,
       issueDate: new Date().toISOString().split("T")[0],
-      dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
+      dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
       status: "draft",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       items: inv.items.map((i) => ({ ...i, id: `item-${Date.now()}-${Math.random()}` })),
     };
-    saveInvoice(newInv);
-    setInvoices(getInvoices());
-  }, []);
+    await persistInvoice(newInv, user.id);
+    await reloadData();
+  }, [user, reloadData]);
 
   // Filter invoices
   const filteredInvoices = invoices.filter((inv) => {
@@ -133,7 +187,8 @@ export default function InvoiceApp() {
   const calcTotal = (items: InvoiceItem[]) => calcSubtotal(items) + calcTax(items);
   const formatCurrency = (n: number) => `¥${n.toLocaleString()}`;
 
-  if (!loaded) {
+  // Auth loading
+  if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -141,167 +196,29 @@ export default function InvoiceApp() {
     );
   }
 
-  // ===== LIST VIEW =====
-  if (view === "list") {
+  // Not authenticated
+  if (!user) {
+    return <LoginView />;
+  }
+
+  if (!loaded) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        {/* Header */}
-        <header className="bg-white border-b sticky top-0 z-10">
-          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-            <h1 className="text-lg font-bold text-gray-800">InvoiceForge</h1>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setView("settings")}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition"
-              >
-                設定
-              </button>
-              <button
-                onClick={handleNewInvoice}
-                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
-              >
-                + 新規作成
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          {/* Search & Filter */}
-          <div className="flex gap-2 mb-4">
-            <input
-              type="text"
-              placeholder="検索（顧客名・番号・施術名）"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
-            />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-              className="px-3 py-2 border rounded-lg text-sm bg-white"
-            >
-              <option value="all">全て</option>
-              <option value="draft">下書き</option>
-              <option value="sent">送付済</option>
-              <option value="paid">入金済</option>
-            </select>
-          </div>
-
-          {/* Summary */}
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="bg-white rounded-xl p-3 border">
-              <p className="text-xs text-gray-500">総件数</p>
-              <p className="text-xl font-bold text-gray-800">{invoices.length}</p>
-            </div>
-            <div className="bg-white rounded-xl p-3 border">
-              <p className="text-xs text-gray-500">未入金</p>
-              <p className="text-xl font-bold text-orange-600">
-                {invoices.filter((i) => i.status !== "paid").length}
-              </p>
-            </div>
-            <div className="bg-white rounded-xl p-3 border">
-              <p className="text-xs text-gray-500">今月売上</p>
-              <p className="text-sm font-bold text-green-600">
-                {formatCurrency(
-                  invoices
-                    .filter((i) => i.status === "paid" && i.issueDate.startsWith(new Date().toISOString().slice(0, 7)))
-                    .reduce((sum, i) => sum + calcTotal(i.items), 0)
-                )}
-              </p>
-            </div>
-          </div>
-
-          {/* Invoice List */}
-          {filteredInvoices.length === 0 ? (
-            <div className="text-center py-16">
-              <p className="text-4xl mb-3">📄</p>
-              <p className="text-gray-500 text-sm">
-                {invoices.length === 0
-                  ? "請求書がまだありません"
-                  : "条件に一致する請求書がありません"}
-              </p>
-              {invoices.length === 0 && (
-                <button
-                  onClick={handleNewInvoice}
-                  className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium"
-                >
-                  最初の請求書を作成
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {filteredInvoices.map((inv) => (
-                <div
-                  key={inv.id}
-                  className="bg-white rounded-xl border p-4 hover:shadow-sm transition"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <p className="font-medium text-gray-800">
-                        {inv.clientName || "（顧客名未入力）"}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {inv.invoiceNumber} / {inv.issueDate}
-                      </p>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        inv.status === "paid"
-                          ? "bg-green-100 text-green-700"
-                          : inv.status === "sent"
-                          ? "bg-blue-100 text-blue-700"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {inv.status === "paid" ? "入金済" : inv.status === "sent" ? "送付済" : "下書き"}
-                    </span>
-                  </div>
-                  <p className="text-lg font-bold text-gray-800 mb-3">
-                    {formatCurrency(calcTotal(inv.items))}
-                  </p>
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={() => handlePreviewInvoice(inv)}
-                      className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
-                    >
-                      プレビュー
-                    </button>
-                    <button
-                      onClick={() => handleEditInvoice(inv)}
-                      className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
-                    >
-                      編集
-                    </button>
-                    <button
-                      onClick={() => handleDuplicateInvoice(inv)}
-                      className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
-                    >
-                      複製
-                    </button>
-                    <button
-                      onClick={() => handleDeleteInvoice(inv.id)}
-                      className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
-                    >
-                      削除
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm text-gray-400">データを読み込み中...</p>
         </div>
       </div>
     );
   }
 
-  // ===== CREATE / EDIT VIEW =====
+  // Views that use their own layout
   if ((view === "create" || view === "edit") && currentInvoice) {
     return (
       <InvoiceEditor
         invoice={currentInvoice}
-        templates={templates}
+        clients={clients}
+        products={products}
         onUpdate={setCurrentInvoice}
         onSave={handleSaveInvoice}
         onCancel={() => { setView("list"); setCurrentInvoice(null); }}
@@ -310,11 +227,11 @@ export default function InvoiceApp() {
         calcTotal={calcTotal}
         formatCurrency={formatCurrency}
         isNew={view === "create"}
+        userId={user.id}
       />
     );
   }
 
-  // ===== PREVIEW VIEW =====
   if (view === "preview" && currentInvoice) {
     return (
       <InvoicePreview
@@ -326,36 +243,436 @@ export default function InvoiceApp() {
         bankInfo={settings.bankInfo}
         onBack={() => { setView("list"); setCurrentInvoice(null); }}
         onEdit={() => handleEditInvoice(currentInvoice)}
-        onStatusChange={(status) => {
+        onStatusChange={async (status) => {
+          if (!user) return;
           const updated = { ...currentInvoice, status, updatedAt: new Date().toISOString() };
-          saveInvoice(updated);
-          setInvoices(getInvoices());
+          await persistInvoice(updated, user.id);
+          await reloadData();
           setCurrentInvoice(updated);
         }}
       />
     );
   }
 
-  // ===== SETTINGS VIEW =====
-  if (view === "settings") {
-    return (
-      <SettingsView
-        settings={settings}
-        templates={templates}
-        onSaveSettings={(s) => { saveSettings(s); setSettings(s); }}
-        onSaveTemplates={(t) => { saveTemplates(t); setTemplates(t); }}
-        onBack={() => setView("list")}
-      />
-    );
-  }
+  // Main layout with sidebar
+  const navItems: { key: View; label: string }[] = [
+    { key: "list", label: "請求書一覧" },
+    { key: "clients", label: "取引先管理" },
+    { key: "products", label: "商品管理" },
+    { key: "analytics", label: "売上分析" },
+    { key: "settings", label: "設定" },
+  ];
 
-  return null;
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar - desktop */}
+      <aside className="hidden md:flex md:flex-col md:w-56 bg-white border-r min-h-screen">
+        <div className="px-4 py-4 border-b">
+          <h1 className="text-lg font-bold text-gray-800">InvoiceForge</h1>
+          <p className="text-xs text-gray-400 mt-0.5">BtoB請求書管理</p>
+        </div>
+        <nav className="flex-1 px-2 py-3 space-y-1">
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setView(item.key)}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
+                view === item.key
+                  ? "bg-blue-50 text-blue-700 font-medium"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="px-4 py-3 border-t">
+          <p className="text-xs text-gray-400 truncate mb-2">{user.email}</p>
+          <button
+            onClick={signOut}
+            className="text-xs text-red-500 hover:text-red-700"
+          >
+            ログアウト
+          </button>
+        </div>
+      </aside>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <div className="fixed inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} />
+          <aside className="fixed left-0 top-0 bottom-0 w-64 bg-white z-50 flex flex-col">
+            <div className="px-4 py-4 border-b flex items-center justify-between">
+              <div>
+                <h1 className="text-lg font-bold text-gray-800">InvoiceForge</h1>
+                <p className="text-xs text-gray-400">BtoB請求書管理</p>
+              </div>
+              <button onClick={() => setSidebarOpen(false)} className="text-gray-500 text-xl">&times;</button>
+            </div>
+            <nav className="flex-1 px-2 py-3 space-y-1">
+              {navItems.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => { setView(item.key); setSidebarOpen(false); }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
+                    view === item.key
+                      ? "bg-blue-50 text-blue-700 font-medium"
+                      : "text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+            <div className="px-4 py-3 border-t">
+              <p className="text-xs text-gray-400 truncate mb-2">{user.email}</p>
+              <button onClick={signOut} className="text-xs text-red-500 hover:text-red-700">ログアウト</button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Main content */}
+      <div className="flex-1 min-h-screen">
+        {/* Mobile header */}
+        <header className="md:hidden bg-white border-b sticky top-0 z-10">
+          <div className="px-4 py-3 flex items-center justify-between">
+            <button onClick={() => setSidebarOpen(true)} className="text-gray-600 text-xl">&#9776;</button>
+            <h1 className="text-sm font-bold text-gray-800">InvoiceForge</h1>
+            <div className="w-6" />
+          </div>
+        </header>
+
+        {view === "list" && (
+          <InvoiceListView
+            invoices={invoices}
+            filteredInvoices={filteredInvoices}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            handleNewInvoice={handleNewInvoice}
+            handlePreviewInvoice={handlePreviewInvoice}
+            handleEditInvoice={handleEditInvoice}
+            handleDuplicateInvoice={handleDuplicateInvoice}
+            handleDeleteInvoice={handleDeleteInvoice}
+            calcTotal={calcTotal}
+            formatCurrency={formatCurrency}
+          />
+        )}
+
+        {view === "clients" && (
+          <ClientsView
+            clients={clients}
+            invoices={invoices}
+            userId={user.id}
+            onReload={reloadData}
+            calcTotal={calcTotal}
+            formatCurrency={formatCurrency}
+          />
+        )}
+
+        {view === "products" && (
+          <ProductsView
+            products={products}
+            userId={user.id}
+            onReload={reloadData}
+            formatCurrency={formatCurrency}
+          />
+        )}
+
+        {view === "analytics" && (
+          <AnalyticsView
+            invoices={invoices}
+            clients={clients}
+            products={products}
+            calcTotal={calcTotal}
+            formatCurrency={formatCurrency}
+          />
+        )}
+
+        {view === "settings" && (
+          <SettingsView
+            settings={settings}
+            userId={user.id}
+            onSaveSettings={async (s) => {
+              if (!user) return;
+              await persistSettings(s, user.id);
+              setSettings(s);
+            }}
+            onBack={() => setView("list")}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ===== LOGIN VIEW =====
+function LoginView() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setMessage("");
+    setLoading(true);
+    try {
+      if (isSignUp) {
+        await signUp(email, password);
+        setMessage("確認メールを送信しました。メールのリンクをクリックして登録を完了してください。");
+      } else {
+        await signIn(email, password);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "エラーが発生しました";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-gray-800">InvoiceForge</h1>
+          <p className="text-sm text-gray-500 mt-1">BtoB請求書管理システム</p>
+        </div>
+        <form onSubmit={handleSubmit} className="bg-white rounded-xl border p-6 space-y-4">
+          <h2 className="text-lg font-bold text-gray-800 text-center">
+            {isSignUp ? "新規登録" : "ログイン"}
+          </h2>
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
+          {message && <p className="text-sm text-green-600 bg-green-50 rounded-lg p-3">{message}</p>}
+          <div>
+            <label className="text-xs text-gray-500">メールアドレス</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full px-3 py-2 border rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
+              placeholder="mail@example.com"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">パスワード</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              className="w-full px-3 py-2 border rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
+              placeholder="6文字以上"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50"
+          >
+            {loading ? "処理中..." : isSignUp ? "登録する" : "ログイン"}
+          </button>
+          <p className="text-center text-xs text-gray-500">
+            {isSignUp ? "既にアカウントをお持ちの方は" : "アカウントをお持ちでない方は"}
+            <button
+              type="button"
+              onClick={() => { setIsSignUp(!isSignUp); setError(""); setMessage(""); }}
+              className="text-blue-600 hover:underline ml-1"
+            >
+              {isSignUp ? "ログイン" : "新規登録"}
+            </button>
+          </p>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ===== INVOICE LIST VIEW =====
+function InvoiceListView({
+  invoices,
+  filteredInvoices,
+  searchQuery,
+  setSearchQuery,
+  statusFilter,
+  setStatusFilter,
+  handleNewInvoice,
+  handlePreviewInvoice,
+  handleEditInvoice,
+  handleDuplicateInvoice,
+  handleDeleteInvoice,
+  calcTotal,
+  formatCurrency,
+}: {
+  invoices: Invoice[];
+  filteredInvoices: Invoice[];
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+  statusFilter: "all" | "draft" | "sent" | "paid";
+  setStatusFilter: (s: "all" | "draft" | "sent" | "paid") => void;
+  handleNewInvoice: () => void;
+  handlePreviewInvoice: (inv: Invoice) => void;
+  handleEditInvoice: (inv: Invoice) => void;
+  handleDuplicateInvoice: (inv: Invoice) => void;
+  handleDeleteInvoice: (id: string) => void;
+  calcTotal: (items: InvoiceItem[]) => number;
+  formatCurrency: (n: number) => string;
+}) {
+  const thisMonth = new Date().toISOString().slice(0, 7);
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-bold text-gray-800">請求書一覧</h2>
+        <button
+          onClick={handleNewInvoice}
+          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+        >
+          + 新規作成
+        </button>
+      </div>
+
+      {/* Search & Filter */}
+      <div className="flex gap-2 mb-4">
+        <input
+          type="text"
+          placeholder="検索（取引先名・番号・商品名）"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          className="px-3 py-2 border rounded-lg text-sm bg-white"
+        >
+          <option value="all">全て</option>
+          <option value="draft">下書き</option>
+          <option value="sent">送付済</option>
+          <option value="paid">入金済</option>
+        </select>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="bg-white rounded-xl p-3 border">
+          <p className="text-xs text-gray-500">総件数</p>
+          <p className="text-xl font-bold text-gray-800">{invoices.length}</p>
+        </div>
+        <div className="bg-white rounded-xl p-3 border">
+          <p className="text-xs text-gray-500">未入金</p>
+          <p className="text-xl font-bold text-orange-600">
+            {invoices.filter((i) => i.status !== "paid").length}
+          </p>
+        </div>
+        <div className="bg-white rounded-xl p-3 border">
+          <p className="text-xs text-gray-500">今月売上</p>
+          <p className="text-sm font-bold text-green-600">
+            {formatCurrency(
+              invoices
+                .filter((i) => i.status === "paid" && i.issueDate.startsWith(thisMonth))
+                .reduce((sum, i) => sum + calcTotal(i.items), 0)
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Invoice List */}
+      {filteredInvoices.length === 0 ? (
+        <div className="text-center py-16">
+          <p className="text-gray-500 text-sm">
+            {invoices.length === 0
+              ? "請求書がまだありません"
+              : "条件に一致する請求書がありません"}
+          </p>
+          {invoices.length === 0 && (
+            <button
+              onClick={handleNewInvoice}
+              className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium"
+            >
+              最初の請求書を作成
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredInvoices.map((inv) => (
+            <div
+              key={inv.id}
+              className="bg-white rounded-xl border p-4 hover:shadow-sm transition"
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <p className="font-medium text-gray-800">
+                    {inv.clientName || "（取引先名未入力）"}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {inv.invoiceNumber} / {inv.issueDate}
+                  </p>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    inv.status === "paid"
+                      ? "bg-green-100 text-green-700"
+                      : inv.status === "sent"
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {inv.status === "paid" ? "入金済" : inv.status === "sent" ? "送付済" : "下書き"}
+                </span>
+              </div>
+              <p className="text-lg font-bold text-gray-800 mb-3">
+                {formatCurrency(calcTotal(inv.items))}
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => handlePreviewInvoice(inv)}
+                  className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
+                >
+                  プレビュー
+                </button>
+                <button
+                  onClick={() => handleEditInvoice(inv)}
+                  className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
+                >
+                  編集
+                </button>
+                <button
+                  onClick={() => handleDuplicateInvoice(inv)}
+                  className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
+                >
+                  複製
+                </button>
+                <button
+                  onClick={() => handleDeleteInvoice(inv.id)}
+                  className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
+                >
+                  削除
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ===== INVOICE EDITOR COMPONENT =====
 function InvoiceEditor({
   invoice,
-  templates,
+  clients,
+  products,
   onUpdate,
   onSave,
   onCancel,
@@ -364,9 +681,11 @@ function InvoiceEditor({
   calcTotal,
   formatCurrency,
   isNew,
+  userId,
 }: {
   invoice: Invoice;
-  templates: MenuTemplate[];
+  clients: Client[];
+  products: Product[];
   onUpdate: (inv: Invoice) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -375,8 +694,12 @@ function InvoiceEditor({
   calcTotal: (items: InvoiceItem[]) => number;
   formatCurrency: (n: number) => string;
   isNew: boolean;
+  userId: string;
 }) {
-  const [showTemplates, setShowTemplates] = useState(false);
+  const [showProducts, setShowProducts] = useState(false);
+  const [showClientPicker, setShowClientPicker] = useState(false);
+  const [newClientMode, setNewClientMode] = useState(false);
+  const [newClient, setNewClient] = useState<Partial<Client>>({});
 
   const updateField = <K extends keyof Invoice>(key: K, value: Invoice[K]) => {
     onUpdate({ ...invoice, [key]: value });
@@ -401,12 +724,42 @@ function InvoiceEditor({
     onUpdate({ ...invoice, items: invoice.items.filter((i) => i.id !== id) });
   };
 
-  const addFromTemplate = (t: MenuTemplate) => {
+  const addFromProduct = (p: Product) => {
     onUpdate({
       ...invoice,
-      items: [...invoice.items, { id: `item-${Date.now()}-${Math.random()}`, name: t.name, quantity: 1, unitPrice: t.unitPrice, taxRate: t.taxRate }],
+      items: [...invoice.items, {
+        id: `item-${Date.now()}-${Math.random()}`,
+        name: p.name,
+        quantity: 1,
+        unitPrice: p.unitPrice,
+        taxRate: p.taxRate,
+      }],
     });
-    setShowTemplates(false);
+    setShowProducts(false);
+  };
+
+  const selectClient = (c: Client) => {
+    onUpdate({
+      ...invoice,
+      clientId: c.id,
+      clientName: c.companyName,
+      clientZip: c.zip,
+      clientAddress: c.address,
+      clientEmail: c.email,
+    });
+    setShowClientPicker(false);
+  };
+
+  const handleAddNewClient = async () => {
+    if (!newClient.companyName) return;
+    try {
+      const saved = await persistClient(newClient as Client, userId);
+      selectClient(saved);
+      setNewClientMode(false);
+      setNewClient({});
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   return (
@@ -477,17 +830,95 @@ function InvoiceEditor({
 
         {/* Client & Clinic Info - 2 column */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Client Info (送信先) */}
+          {/* Client Info (請求先) */}
           <div className="bg-white rounded-xl border p-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-3">送信先（請求先）</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-700">請求先（取引先）</h3>
+              <button
+                onClick={() => setShowClientPicker(!showClientPicker)}
+                className="px-3 py-1 text-xs bg-green-50 text-green-600 rounded-lg hover:bg-green-100"
+              >
+                取引先から選択
+              </button>
+            </div>
+
+            {/* Client Picker */}
+            {showClientPicker && (
+              <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
+                <p className="text-xs text-green-700 font-medium mb-2">取引先一覧</p>
+                {clients.length > 0 ? (
+                  <div className="space-y-1 max-h-40 overflow-y-auto mb-2">
+                    {clients.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => selectClient(c)}
+                        className="w-full text-left px-3 py-2 text-xs bg-white border rounded-lg hover:bg-green-100 transition"
+                      >
+                        <span className="font-medium">{c.companyName}</span>
+                        {c.contactName && <span className="text-gray-500 ml-2">{c.contactName}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 mb-2">取引先が登録されていません</p>
+                )}
+                {!newClientMode ? (
+                  <button
+                    onClick={() => setNewClientMode(true)}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    + 新規取引先を追加
+                  </button>
+                ) : (
+                  <div className="space-y-2 mt-2 p-2 bg-white rounded-lg border">
+                    <input
+                      type="text"
+                      placeholder="会社名/院名"
+                      value={newClient.companyName || ""}
+                      onChange={(e) => setNewClient({ ...newClient, companyName: e.target.value })}
+                      className="w-full px-2 py-1.5 border rounded text-xs"
+                    />
+                    <input
+                      type="text"
+                      placeholder="担当者名"
+                      value={newClient.contactName || ""}
+                      onChange={(e) => setNewClient({ ...newClient, contactName: e.target.value })}
+                      className="w-full px-2 py-1.5 border rounded text-xs"
+                    />
+                    <input
+                      type="email"
+                      placeholder="メール"
+                      value={newClient.email || ""}
+                      onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}
+                      className="w-full px-2 py-1.5 border rounded text-xs"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleAddNewClient}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        追加して選択
+                      </button>
+                      <button
+                        onClick={() => { setNewClientMode(false); setNewClient({}); }}
+                        className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500">宛名</label>
+                <label className="text-xs text-gray-500">会社名/院名</label>
                 <input
                   type="text"
                   value={invoice.clientName}
                   onChange={(e) => updateField("clientName", e.target.value)}
-                  placeholder="例: 山田 太郎 様"
+                  placeholder="例: 株式会社ABC"
                   className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
                 />
               </div>
@@ -497,7 +928,7 @@ function InvoiceEditor({
                   type="text"
                   value={invoice.clientZip}
                   onChange={(e) => updateField("clientZip", e.target.value)}
-                  placeholder="例: 〒123-4567"
+                  placeholder="例: 123-4567"
                   className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
                 />
               </div>
@@ -517,19 +948,19 @@ function InvoiceEditor({
                   type="email"
                   value={invoice.clientEmail}
                   onChange={(e) => updateField("clientEmail", e.target.value)}
-                  placeholder="例: yamada@example.com"
+                  placeholder="例: info@example.com"
                   className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
                 />
               </div>
             </div>
           </div>
 
-          {/* Clinic Info (送信元) */}
+          {/* Clinic Info (発行元) */}
           <div className="bg-white rounded-xl border p-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-3">送信元（発行元）</h3>
+            <h3 className="text-sm font-bold text-gray-700 mb-3">発行元</h3>
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500">院名・会社名</label>
+                <label className="text-xs text-gray-500">会社名/院名</label>
                 <input
                   type="text"
                   value={invoice.clinicName}
@@ -544,7 +975,6 @@ function InvoiceEditor({
                   type="text"
                   value={invoice.clinicZip}
                   onChange={(e) => updateField("clinicZip", e.target.value)}
-                  placeholder="例: 〒558-0003"
                   className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
                 />
               </div>
@@ -554,7 +984,6 @@ function InvoiceEditor({
                   type="text"
                   value={invoice.clinicAddress}
                   onChange={(e) => updateField("clinicAddress", e.target.value)}
-                  placeholder="例: 大阪市住吉区長居..."
                   className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
                 />
               </div>
@@ -573,7 +1002,6 @@ function InvoiceEditor({
                   type="email"
                   value={invoice.clinicEmail}
                   onChange={(e) => updateField("clinicEmail", e.target.value)}
-                  placeholder="例: info@example.com"
                   className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
                 />
               </div>
@@ -587,10 +1015,10 @@ function InvoiceEditor({
             <h3 className="text-sm font-bold text-gray-700">明細</h3>
             <div className="flex gap-2">
               <button
-                onClick={() => setShowTemplates(!showTemplates)}
+                onClick={() => setShowProducts(!showProducts)}
                 className="px-3 py-1 text-xs bg-green-50 text-green-600 rounded-lg hover:bg-green-100"
               >
-                テンプレから追加
+                商品から追加
               </button>
               <button
                 onClick={addItem}
@@ -601,21 +1029,25 @@ function InvoiceEditor({
             </div>
           </div>
 
-          {/* Template Selector */}
-          {showTemplates && (
+          {/* Product Selector */}
+          {showProducts && (
             <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
-              <p className="text-xs text-green-700 font-medium mb-2">施術メニューテンプレート</p>
-              <div className="flex flex-wrap gap-2">
-                {templates.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => addFromTemplate(t)}
-                    className="px-3 py-1.5 text-xs bg-white border border-green-300 rounded-lg hover:bg-green-100 transition"
-                  >
-                    {t.name}（{formatCurrency(t.unitPrice)}）
-                  </button>
-                ))}
-              </div>
+              <p className="text-xs text-green-700 font-medium mb-2">商品・サービス一覧</p>
+              {products.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {products.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => addFromProduct(p)}
+                      className="px-3 py-1.5 text-xs bg-white border border-green-300 rounded-lg hover:bg-green-100 transition"
+                    >
+                      {p.name}（{formatCurrency(p.unitPrice)}）
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">商品が登録されていません。商品管理から登録してください。</p>
+              )}
             </div>
           )}
 
@@ -637,7 +1069,7 @@ function InvoiceEditor({
                   type="text"
                   value={item.name}
                   onChange={(e) => updateItem(item.id, "name", e.target.value)}
-                  placeholder="施術名・項目名"
+                  placeholder="商品名・サービス名"
                   className="w-full px-3 py-2 border rounded-lg text-sm mb-2"
                 />
                 <div className="grid grid-cols-3 gap-2">
@@ -761,17 +1193,17 @@ function InvoicePreview({
     let msg = `【請求書】${invoice.invoiceNumber}\n`;
     msg += `発行日: ${invoice.issueDate}\n`;
     msg += `支払期限: ${invoice.dueDate}\n\n`;
-    msg += `${invoice.clientName} 様\n\n`;
+    msg += `${invoice.clientName} 御中\n\n`;
     msg += `下記の通りご請求申し上げます。\n\n`;
-    msg += `━━━ 明細 ━━━\n${items}\n\n`;
+    msg += `--- 明細 ---\n${items}\n\n`;
     msg += `小計: ¥${subtotal.toLocaleString()}\n`;
     msg += `消費税: ¥${tax.toLocaleString()}\n`;
     msg += `合計: ¥${total.toLocaleString()}\n`;
     if (bankInfo) {
-      msg += `\n━━━ 振込先 ━━━\n${bankInfo}\n`;
+      msg += `\n--- 振込先 ---\n${bankInfo}\n`;
     }
     if (invoice.notes) {
-      msg += `\n━━━ 備考 ━━━\n${invoice.notes}\n`;
+      msg += `\n--- 備考 ---\n${invoice.notes}\n`;
     }
     msg += `\n${invoice.clinicName}`;
     if (invoice.clinicPhone) msg += `\nTEL: ${invoice.clinicPhone}`;
@@ -851,11 +1283,11 @@ function InvoicePreview({
 
           {/* Top Section - 2 column */}
           <div className="grid grid-cols-2 gap-8 mb-8">
-            {/* Client (送信先) */}
+            {/* Client (請求先) */}
             <div>
-              <p className="text-xs text-gray-400 mb-1">送信先</p>
+              <p className="text-xs text-gray-400 mb-1">請求先</p>
               <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
-                <p className="text-lg font-bold">{invoice.clientName || "（宛名未入力）"}</p>
+                <p className="text-lg font-bold">{invoice.clientName || "（取引先名未入力）"} 御中</p>
               </div>
               {invoice.clientZip && <p className="text-xs text-gray-500">{invoice.clientZip}</p>}
               {invoice.clientAddress && <p className="text-xs text-gray-500">{invoice.clientAddress}</p>}
@@ -868,9 +1300,9 @@ function InvoicePreview({
               </div>
             </div>
 
-            {/* Clinic (送信元) */}
+            {/* Clinic (発行元) */}
             <div className="text-right">
-              <p className="text-xs text-gray-400 mb-1">送信元</p>
+              <p className="text-xs text-gray-400 mb-1">発行元</p>
               {invoice.clinicLogo && (
                 <img
                   src={invoice.clinicLogo}
@@ -974,29 +1406,724 @@ function InvoicePreview({
   );
 }
 
+// ===== CLIENTS VIEW =====
+function ClientsView({
+  clients,
+  invoices,
+  userId,
+  onReload,
+  calcTotal,
+  formatCurrency,
+}: {
+  clients: Client[];
+  invoices: Invoice[];
+  userId: string;
+  onReload: () => Promise<void>;
+  calcTotal: (items: InvoiceItem[]) => number;
+  formatCurrency: (n: number) => string;
+}) {
+  const [editing, setEditing] = useState<Partial<Client> | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+
+  const filteredClients = clients.filter(
+    (c) =>
+      !searchQuery ||
+      c.companyName.includes(searchQuery) ||
+      c.contactName.includes(searchQuery)
+  );
+
+  const handleSave = async () => {
+    if (!editing || !editing.companyName) return;
+    await persistClient(editing as Client, userId);
+    await onReload();
+    setEditing(null);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("この取引先を削除しますか?")) return;
+    await removeClient(id);
+    await onReload();
+    if (selectedClient?.id === id) setSelectedClient(null);
+  };
+
+  // Client's invoice history
+  const clientInvoices = selectedClient
+    ? invoices.filter((inv) => inv.clientId === selectedClient.id || inv.clientName === selectedClient.companyName)
+    : [];
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-4">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-bold text-gray-800">取引先管理</h2>
+        <button
+          onClick={() => setEditing({ companyName: "", contactName: "", zip: "", address: "", phone: "", email: "", memo: "" })}
+          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+        >
+          + 新規取引先
+        </button>
+      </div>
+
+      {/* Search */}
+      <input
+        type="text"
+        placeholder="取引先を検索..."
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        className="w-full px-3 py-2 border rounded-lg text-sm mb-4 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
+      />
+
+      {/* Edit/Create Form */}
+      {editing && (
+        <div className="bg-white rounded-xl border p-4 mb-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">
+            {editing.id ? "取引先編集" : "新規取引先"}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-500">会社名/院名 *</label>
+              <input
+                type="text"
+                value={editing.companyName || ""}
+                onChange={(e) => setEditing({ ...editing, companyName: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">担当者名</label>
+              <input
+                type="text"
+                value={editing.contactName || ""}
+                onChange={(e) => setEditing({ ...editing, contactName: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">郵便番号</label>
+              <input
+                type="text"
+                value={editing.zip || ""}
+                onChange={(e) => setEditing({ ...editing, zip: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">住所</label>
+              <input
+                type="text"
+                value={editing.address || ""}
+                onChange={(e) => setEditing({ ...editing, address: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">電話番号</label>
+              <input
+                type="tel"
+                value={editing.phone || ""}
+                onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">メール</label>
+              <input
+                type="email"
+                value={editing.email || ""}
+                onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs text-gray-500">メモ</label>
+              <textarea
+                value={editing.memo || ""}
+                onChange={(e) => setEditing({ ...editing, memo: e.target.value })}
+                rows={2}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 resize-none"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={handleSave}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+            >
+              保存
+            </button>
+            <button
+              onClick={() => setEditing(null)}
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Client Detail */}
+      {selectedClient && (
+        <div className="bg-white rounded-xl border p-4 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-gray-700">
+              {selectedClient.companyName} の請求履歴
+            </h3>
+            <button
+              onClick={() => setSelectedClient(null)}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              閉じる
+            </button>
+          </div>
+          {clientInvoices.length === 0 ? (
+            <p className="text-sm text-gray-500">請求履歴がありません</p>
+          ) : (
+            <div className="space-y-2">
+              {clientInvoices.map((inv) => (
+                <div key={inv.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg text-sm">
+                  <div>
+                    <span className="font-medium">{inv.invoiceNumber}</span>
+                    <span className="text-gray-500 ml-2">{inv.issueDate}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${
+                      inv.status === "paid" ? "bg-green-100 text-green-700" :
+                      inv.status === "sent" ? "bg-blue-100 text-blue-700" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>
+                      {inv.status === "paid" ? "入金済" : inv.status === "sent" ? "送付済" : "下書き"}
+                    </span>
+                    <span className="font-bold">{formatCurrency(calcTotal(inv.items))}</span>
+                  </div>
+                </div>
+              ))}
+              <div className="pt-2 border-t text-sm text-right">
+                <span className="text-gray-500">合計: </span>
+                <span className="font-bold">
+                  {formatCurrency(clientInvoices.reduce((s, inv) => s + calcTotal(inv.items), 0))}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Client List */}
+      {filteredClients.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-gray-500 text-sm">取引先が登録されていません</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredClients.map((c) => (
+            <div key={c.id} className="bg-white rounded-xl border p-4 hover:shadow-sm transition">
+              <div className="flex items-start justify-between">
+                <div className="cursor-pointer" onClick={() => setSelectedClient(c)}>
+                  <p className="font-medium text-gray-800">{c.companyName}</p>
+                  {c.contactName && <p className="text-xs text-gray-500">{c.contactName}</p>}
+                  {c.phone && <p className="text-xs text-gray-400">{c.phone}</p>}
+                  {c.email && <p className="text-xs text-gray-400">{c.email}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedClient(c)}
+                    className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
+                  >
+                    履歴
+                  </button>
+                  <button
+                    onClick={() => setEditing({ ...c })}
+                    className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
+                  >
+                    編集
+                  </button>
+                  <button
+                    onClick={() => handleDelete(c.id)}
+                    className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== PRODUCTS VIEW =====
+function ProductsView({
+  products,
+  userId,
+  onReload,
+  formatCurrency,
+}: {
+  products: Product[];
+  userId: string;
+  onReload: () => Promise<void>;
+  formatCurrency: (n: number) => string;
+}) {
+  const [editing, setEditing] = useState<Partial<Product> | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<"all" | "product" | "service" | "other">("all");
+
+  const filteredProducts = products.filter(
+    (p) => categoryFilter === "all" || p.category === categoryFilter
+  );
+
+  const handleSave = async () => {
+    if (!editing || !editing.name) return;
+    await persistProduct(editing as Product, userId);
+    await onReload();
+    setEditing(null);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("この商品を削除しますか?")) return;
+    await removeProduct(id);
+    await onReload();
+  };
+
+  const categoryLabel = (cat: string) => {
+    switch (cat) {
+      case "product": return "商品";
+      case "service": return "サービス";
+      case "other": return "その他";
+      default: return cat;
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-4">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-bold text-gray-800">商品・サービス管理</h2>
+        <button
+          onClick={() => setEditing({ name: "", unitPrice: 0, taxRate: 0.1, category: "service", memo: "" })}
+          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+        >
+          + 新規商品
+        </button>
+      </div>
+
+      {/* Category Filter */}
+      <div className="flex gap-2 mb-4">
+        {(["all", "product", "service", "other"] as const).map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setCategoryFilter(cat)}
+            className={`px-3 py-1.5 text-xs rounded-lg transition ${
+              categoryFilter === cat
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            {cat === "all" ? "全て" : categoryLabel(cat)}
+          </button>
+        ))}
+      </div>
+
+      {/* Edit/Create Form */}
+      {editing && (
+        <div className="bg-white rounded-xl border p-4 mb-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">
+            {editing.id ? "商品編集" : "新規商品"}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-500">商品名/サービス名 *</label>
+              <input
+                type="text"
+                value={editing.name || ""}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">カテゴリ</label>
+              <select
+                value={editing.category || "service"}
+                onChange={(e) => setEditing({ ...editing, category: e.target.value as Product["category"] })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 bg-white"
+              >
+                <option value="product">商品</option>
+                <option value="service">サービス</option>
+                <option value="other">その他</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">単価</label>
+              <input
+                type="number"
+                min={0}
+                value={editing.unitPrice || 0}
+                onChange={(e) => setEditing({ ...editing, unitPrice: parseInt(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">税率</label>
+              <select
+                value={editing.taxRate ?? 0.1}
+                onChange={(e) => setEditing({ ...editing, taxRate: parseFloat(e.target.value) })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 bg-white"
+              >
+                <option value={0.1}>10%</option>
+                <option value={0.08}>8%</option>
+                <option value={0}>0%</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs text-gray-500">メモ</label>
+              <textarea
+                value={editing.memo || ""}
+                onChange={(e) => setEditing({ ...editing, memo: e.target.value })}
+                rows={2}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 resize-none"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={handleSave}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+            >
+              保存
+            </button>
+            <button
+              onClick={() => setEditing(null)}
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Product List */}
+      {filteredProducts.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-gray-500 text-sm">商品が登録されていません</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredProducts.map((p) => (
+            <div key={p.id} className="bg-white rounded-xl border p-4 hover:shadow-sm transition">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="font-medium text-gray-800">{p.name}</p>
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${
+                      p.category === "product" ? "bg-purple-100 text-purple-700" :
+                      p.category === "service" ? "bg-blue-100 text-blue-700" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>
+                      {categoryLabel(p.category)}
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-700">
+                    {formatCurrency(p.unitPrice)}
+                    <span className="text-xs text-gray-400 font-normal ml-1">
+                      （税率{Math.round(p.taxRate * 100)}%）
+                    </span>
+                  </p>
+                  {p.memo && <p className="text-xs text-gray-400 mt-1">{p.memo}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditing({ ...p })}
+                    className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
+                  >
+                    編集
+                  </button>
+                  <button
+                    onClick={() => handleDelete(p.id)}
+                    className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== ANALYTICS VIEW =====
+function AnalyticsView({
+  invoices,
+  clients,
+  products,
+  calcTotal,
+  formatCurrency,
+}: {
+  invoices: Invoice[];
+  clients: Client[];
+  products: Product[];
+  calcTotal: (items: InvoiceItem[]) => number;
+  formatCurrency: (n: number) => string;
+}) {
+  const now = new Date();
+  const thisMonth = now.toISOString().slice(0, 7);
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7);
+
+  // Monthly totals for recent 6 months
+  const monthlyData: { month: string; total: number; paid: number }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const m = d.toISOString().slice(0, 7);
+    const monthInvoices = invoices.filter((inv) => inv.issueDate.startsWith(m));
+    monthlyData.push({
+      month: `${d.getMonth() + 1}月`,
+      total: monthInvoices.reduce((s, inv) => s + calcTotal(inv.items), 0),
+      paid: monthInvoices.filter((inv) => inv.status === "paid").reduce((s, inv) => s + calcTotal(inv.items), 0),
+    });
+  }
+  const maxMonthly = Math.max(...monthlyData.map((d) => d.total), 1);
+
+  // This month vs last month
+  const thisMonthTotal = invoices
+    .filter((inv) => inv.issueDate.startsWith(thisMonth))
+    .reduce((s, inv) => s + calcTotal(inv.items), 0);
+  const lastMonthTotal = invoices
+    .filter((inv) => inv.issueDate.startsWith(lastMonth))
+    .reduce((s, inv) => s + calcTotal(inv.items), 0);
+  const monthDiff = lastMonthTotal > 0 ? Math.round(((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100) : 0;
+
+  // Client ranking
+  const clientTotals: Record<string, { name: string; total: number }> = {};
+  invoices.forEach((inv) => {
+    const key = inv.clientName || "（取引先名なし）";
+    if (!clientTotals[key]) clientTotals[key] = { name: key, total: 0 };
+    clientTotals[key].total += calcTotal(inv.items);
+  });
+  const clientRanking = Object.values(clientTotals).sort((a, b) => b.total - a.total).slice(0, 10);
+
+  // Product/service breakdown
+  const itemTotals: Record<string, { name: string; total: number; count: number }> = {};
+  invoices.forEach((inv) => {
+    inv.items.forEach((item) => {
+      const key = item.name || "（品名なし）";
+      if (!itemTotals[key]) itemTotals[key] = { name: key, total: 0, count: 0 };
+      itemTotals[key].total += item.quantity * item.unitPrice;
+      itemTotals[key].count += item.quantity;
+    });
+  });
+  const itemRanking = Object.values(itemTotals).sort((a, b) => b.total - a.total).slice(0, 10);
+
+  // Status breakdown
+  const statusCounts = {
+    draft: invoices.filter((i) => i.status === "draft").length,
+    sent: invoices.filter((i) => i.status === "sent").length,
+    paid: invoices.filter((i) => i.status === "paid").length,
+  };
+  const statusTotals = {
+    draft: invoices.filter((i) => i.status === "draft").reduce((s, i) => s + calcTotal(i.items), 0),
+    sent: invoices.filter((i) => i.status === "sent").reduce((s, i) => s + calcTotal(i.items), 0),
+    paid: invoices.filter((i) => i.status === "paid").reduce((s, i) => s + calcTotal(i.items), 0),
+  };
+
+  // Overdue invoices
+  const today = now.toISOString().split("T")[0];
+  const overdueInvoices = invoices.filter(
+    (inv) => inv.status !== "paid" && inv.dueDate < today
+  );
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
+      <h2 className="text-lg font-bold text-gray-800">売上分析ダッシュボード</h2>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl p-4 border">
+          <p className="text-xs text-gray-500">今月売上</p>
+          <p className="text-lg font-bold text-gray-800">{formatCurrency(thisMonthTotal)}</p>
+          {lastMonthTotal > 0 && (
+            <p className={`text-xs mt-1 ${monthDiff >= 0 ? "text-green-600" : "text-red-600"}`}>
+              先月比 {monthDiff >= 0 ? "+" : ""}{monthDiff}%
+            </p>
+          )}
+        </div>
+        <div className="bg-white rounded-xl p-4 border">
+          <p className="text-xs text-gray-500">先月売上</p>
+          <p className="text-lg font-bold text-gray-800">{formatCurrency(lastMonthTotal)}</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 border">
+          <p className="text-xs text-gray-500">入金済合計</p>
+          <p className="text-lg font-bold text-green-600">{formatCurrency(statusTotals.paid)}</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 border">
+          <p className="text-xs text-gray-500">未入金合計</p>
+          <p className="text-lg font-bold text-orange-600">
+            {formatCurrency(statusTotals.draft + statusTotals.sent)}
+          </p>
+        </div>
+      </div>
+
+      {/* Monthly Chart */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-4">月別売上推移（直近6ヶ月）</h3>
+        <div className="flex items-end gap-2 h-40">
+          {monthlyData.map((d, idx) => (
+            <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+              <p className="text-xs text-gray-600 font-medium">
+                {d.total > 0 ? formatCurrency(d.total) : ""}
+              </p>
+              <div className="w-full flex flex-col items-center" style={{ height: "100px" }}>
+                <div className="w-full flex items-end h-full gap-0.5">
+                  <div
+                    className="flex-1 bg-blue-400 rounded-t"
+                    style={{ height: `${Math.max((d.total / maxMonthly) * 100, 2)}%` }}
+                    title={`合計: ${formatCurrency(d.total)}`}
+                  />
+                  <div
+                    className="flex-1 bg-green-400 rounded-t"
+                    style={{ height: `${Math.max((d.paid / maxMonthly) * 100, 2)}%` }}
+                    title={`入金済: ${formatCurrency(d.paid)}`}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">{d.month}</p>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-4 mt-2 justify-center">
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-blue-400 rounded" />
+            <span className="text-xs text-gray-500">合計</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-green-400 rounded" />
+            <span className="text-xs text-gray-500">入金済</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Client Ranking */}
+        <div className="bg-white rounded-xl border p-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">取引先別売上ランキング</h3>
+          {clientRanking.length === 0 ? (
+            <p className="text-sm text-gray-500">データがありません</p>
+          ) : (
+            <div className="space-y-2">
+              {clientRanking.map((c, idx) => (
+                <div key={idx} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-5">{idx + 1}.</span>
+                    <span className="text-gray-700 truncate max-w-[160px]">{c.name}</span>
+                  </div>
+                  <span className="font-bold text-gray-800">{formatCurrency(c.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Item Ranking */}
+        <div className="bg-white rounded-xl border p-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">商品・サービス別売上</h3>
+          {itemRanking.length === 0 ? (
+            <p className="text-sm text-gray-500">データがありません</p>
+          ) : (
+            <div className="space-y-2">
+              {itemRanking.map((it, idx) => (
+                <div key={idx} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-5">{idx + 1}.</span>
+                    <span className="text-gray-700 truncate max-w-[160px]">{it.name}</span>
+                    <span className="text-xs text-gray-400">({it.count}件)</span>
+                  </div>
+                  <span className="font-bold text-gray-800">{formatCurrency(it.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Status Breakdown */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">ステータス別集計</h3>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <p className="text-xs text-gray-500 mb-1">下書き</p>
+            <p className="text-lg font-bold text-gray-600">{statusCounts.draft}件</p>
+            <p className="text-sm text-gray-500">{formatCurrency(statusTotals.draft)}</p>
+          </div>
+          <div className="text-center p-3 bg-blue-50 rounded-lg">
+            <p className="text-xs text-blue-600 mb-1">送付済</p>
+            <p className="text-lg font-bold text-blue-700">{statusCounts.sent}件</p>
+            <p className="text-sm text-blue-600">{formatCurrency(statusTotals.sent)}</p>
+          </div>
+          <div className="text-center p-3 bg-green-50 rounded-lg">
+            <p className="text-xs text-green-600 mb-1">入金済</p>
+            <p className="text-lg font-bold text-green-700">{statusCounts.paid}件</p>
+            <p className="text-sm text-green-600">{formatCurrency(statusTotals.paid)}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Overdue Invoices */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">
+          未入金アラート
+          {overdueInvoices.length > 0 && (
+            <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
+              {overdueInvoices.length}件
+            </span>
+          )}
+        </h3>
+        {overdueInvoices.length === 0 ? (
+          <p className="text-sm text-gray-500">支払期限を過ぎた請求書はありません</p>
+        ) : (
+          <div className="space-y-2">
+            {overdueInvoices.map((inv) => {
+              const daysOverdue = Math.floor(
+                (new Date(today).getTime() - new Date(inv.dueDate).getTime()) / 86400000
+              );
+              return (
+                <div key={inv.id} className="flex items-center justify-between p-3 bg-red-50 rounded-lg text-sm">
+                  <div>
+                    <p className="font-medium text-gray-800">{inv.clientName || "（取引先名なし）"}</p>
+                    <p className="text-xs text-gray-500">
+                      {inv.invoiceNumber} / 期限: {inv.dueDate}
+                      <span className="text-red-600 ml-2">{daysOverdue}日超過</span>
+                    </p>
+                  </div>
+                  <span className="font-bold text-red-700">{formatCurrency(calcTotal(inv.items))}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ===== SETTINGS VIEW =====
 function SettingsView({
   settings,
-  templates,
+  userId,
   onSaveSettings,
-  onSaveTemplates,
   onBack,
 }: {
   settings: ClinicSettings;
-  templates: MenuTemplate[];
+  userId: string;
   onSaveSettings: (s: ClinicSettings) => void;
-  onSaveTemplates: (t: MenuTemplate[]) => void;
   onBack: () => void;
 }) {
   const [localSettings, setLocalSettings] = useState<ClinicSettings>({ ...settings });
-  const [localTemplates, setLocalTemplates] = useState<MenuTemplate[]>(templates.map((t) => ({ ...t })));
   const [saved, setSaved] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const stampInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = () => {
     onSaveSettings(localSettings);
-    onSaveTemplates(localTemplates);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -1009,253 +2136,180 @@ function SettingsView({
     reader.readAsDataURL(file);
   };
 
-  const addTemplate = () => {
-    setLocalTemplates((prev) => [
-      ...prev,
-      { id: `t-${Date.now()}`, name: "", unitPrice: 0, taxRate: 0.1 },
-    ]);
-  };
-
-  const removeTemplate = (id: string) => {
-    setLocalTemplates((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  const updateTemplate = (id: string, field: keyof MenuTemplate, value: string | number) => {
-    setLocalTemplates((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, [field]: value } : t))
-    );
-  };
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={onBack} className="text-sm text-gray-600 hover:text-gray-800">
-            &larr; 戻る
-          </button>
-          <h2 className="text-sm font-bold text-gray-800">設定</h2>
-          <button
-            onClick={handleSave}
-            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-          >
-            {saved ? "保存済!" : "保存"}
-          </button>
-        </div>
-      </header>
+    <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-gray-800">設定</h2>
+        <button
+          onClick={handleSave}
+          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+        >
+          {saved ? "保存済み" : "保存"}
+        </button>
+      </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
-        {/* Clinic Info */}
-        <div className="bg-white rounded-xl border p-4">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">院情報</h3>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-gray-500">院名</label>
-              <input
-                type="text"
-                value={localSettings.clinicName}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicName: e.target.value }))}
-                placeholder="例: 大口神経整体院"
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-gray-500">郵便番号</label>
-                <input
-                  type="text"
-                  value={localSettings.clinicZip}
-                  onChange={(e) => setLocalSettings((p) => ({ ...p, clinicZip: e.target.value }))}
-                  placeholder="例: 〒558-0003"
-                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="text-xs text-gray-500">住所</label>
-                <input
-                  type="text"
-                  value={localSettings.clinicAddress}
-                  onChange={(e) => setLocalSettings((p) => ({ ...p, clinicAddress: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-500">電話番号</label>
-                <input
-                  type="tel"
-                  value={localSettings.clinicPhone}
-                  onChange={(e) => setLocalSettings((p) => ({ ...p, clinicPhone: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500">メール</label>
-                <input
-                  type="email"
-                  value={localSettings.clinicEmail}
-                  onChange={(e) => setLocalSettings((p) => ({ ...p, clinicEmail: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Logo & Stamp */}
-        <div className="bg-white rounded-xl border p-4">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">ロゴ・印影</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-gray-500 block mb-2">ロゴ画像</label>
-              {localSettings.clinicLogo ? (
-                <div className="relative inline-block">
-                  <img src={localSettings.clinicLogo} alt="Logo" className="w-24 h-24 object-contain border rounded-lg" />
-                  <button
-                    onClick={() => setLocalSettings((p) => ({ ...p, clinicLogo: "" }))}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
-                  >
-                    x
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => logoInputRef.current?.click()}
-                  className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
-                >
-                  +
-                </button>
-              )}
-              <input
-                ref={logoInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicLogo", e.target.files[0]); }}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 block mb-2">印影画像</label>
-              {localSettings.clinicStamp ? (
-                <div className="relative inline-block">
-                  <img src={localSettings.clinicStamp} alt="Stamp" className="w-24 h-24 object-contain border rounded-lg" />
-                  <button
-                    onClick={() => setLocalSettings((p) => ({ ...p, clinicStamp: "" }))}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
-                  >
-                    x
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => stampInputRef.current?.click()}
-                  className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
-                >
-                  +
-                </button>
-              )}
-              <input
-                ref={stampInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicStamp", e.target.files[0]); }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Invoice Settings */}
-        <div className="bg-white rounded-xl border p-4">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">請求書設定</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-500">番号プレフィックス</label>
-              <input
-                type="text"
-                value={localSettings.invoicePrefix}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, invoicePrefix: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">次の番号</label>
-              <input
-                type="number"
-                min={1}
-                value={localSettings.nextInvoiceNumber}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, nextInvoiceNumber: parseInt(e.target.value) || 1 }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-          </div>
-          <div className="mt-3">
-            <label className="text-xs text-gray-500">振込先情報</label>
-            <textarea
-              value={localSettings.bankInfo}
-              onChange={(e) => setLocalSettings((p) => ({ ...p, bankInfo: e.target.value }))}
-              placeholder="例: 三菱UFJ銀行 渋谷支店 普通 1234567 カ）オオクチシンケイセイタイイン"
-              rows={3}
-              className="w-full px-3 py-2 border rounded-lg text-sm mt-1 resize-none"
+      {/* Company Info */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">会社・院情報</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-500">会社名/院名</label>
+            <input
+              type="text"
+              value={localSettings.clinicName}
+              onChange={(e) => setLocalSettings((p) => ({ ...p, clinicName: e.target.value }))}
+              placeholder="例: 大口神経整体院"
+              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
             />
           </div>
-        </div>
-
-        {/* Menu Templates */}
-        <div className="bg-white rounded-xl border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-gray-700">施術メニューテンプレート</h3>
-            <button
-              onClick={addTemplate}
-              className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
-            >
-              + 追加
-            </button>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs text-gray-500">郵便番号</label>
+              <input
+                type="text"
+                value={localSettings.clinicZip}
+                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicZip: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs text-gray-500">住所</label>
+              <input
+                type="text"
+                value={localSettings.clinicAddress}
+                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicAddress: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            {localTemplates.map((t) => (
-              <div key={t.id} className="flex gap-2 items-center">
-                <input
-                  type="text"
-                  value={t.name}
-                  onChange={(e) => updateTemplate(t.id, "name", e.target.value)}
-                  placeholder="メニュー名"
-                  className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                />
-                <input
-                  type="number"
-                  value={t.unitPrice}
-                  onChange={(e) => updateTemplate(t.id, "unitPrice", parseInt(e.target.value) || 0)}
-                  placeholder="単価"
-                  className="w-24 px-3 py-2 border rounded-lg text-sm"
-                />
-                <select
-                  value={t.taxRate}
-                  onChange={(e) => updateTemplate(t.id, "taxRate", parseFloat(e.target.value))}
-                  className="w-16 px-2 py-2 border rounded-lg text-sm bg-white"
-                >
-                  <option value={0.1}>10%</option>
-                  <option value={0.08}>8%</option>
-                  <option value={0}>0%</option>
-                </select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-500">電話番号</label>
+              <input
+                type="tel"
+                value={localSettings.clinicPhone}
+                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicPhone: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">メール</label>
+              <input
+                type="email"
+                value={localSettings.clinicEmail}
+                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicEmail: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Logo & Stamp */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">ロゴ・印影</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs text-gray-500 block mb-2">ロゴ画像</label>
+            {localSettings.clinicLogo ? (
+              <div className="relative inline-block">
+                <img src={localSettings.clinicLogo} alt="Logo" className="w-24 h-24 object-contain border rounded-lg" />
                 <button
-                  onClick={() => removeTemplate(t.id)}
-                  className="text-red-500 hover:text-red-700 text-xs px-2"
+                  onClick={() => setLocalSettings((p) => ({ ...p, clinicLogo: "" }))}
+                  className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
                 >
                   x
                 </button>
               </div>
-            ))}
+            ) : (
+              <button
+                onClick={() => logoInputRef.current?.click()}
+                className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
+              >
+                +
+              </button>
+            )}
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicLogo", e.target.files[0]); }}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-2">印影画像</label>
+            {localSettings.clinicStamp ? (
+              <div className="relative inline-block">
+                <img src={localSettings.clinicStamp} alt="Stamp" className="w-24 h-24 object-contain border rounded-lg" />
+                <button
+                  onClick={() => setLocalSettings((p) => ({ ...p, clinicStamp: "" }))}
+                  className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
+                >
+                  x
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => stampInputRef.current?.click()}
+                className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
+              >
+                +
+              </button>
+            )}
+            <input
+              ref={stampInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicStamp", e.target.files[0]); }}
+            />
           </div>
         </div>
-
-        <button
-          onClick={handleSave}
-          className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition"
-        >
-          {saved ? "保存しました!" : "設定を保存"}
-        </button>
       </div>
+
+      {/* Invoice Settings */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">請求書設定</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-gray-500">番号プレフィックス</label>
+            <input
+              type="text"
+              value={localSettings.invoicePrefix}
+              onChange={(e) => setLocalSettings((p) => ({ ...p, invoicePrefix: e.target.value }))}
+              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">次の番号</label>
+            <input
+              type="number"
+              min={1}
+              value={localSettings.nextInvoiceNumber}
+              onChange={(e) => setLocalSettings((p) => ({ ...p, nextInvoiceNumber: parseInt(e.target.value) || 1 }))}
+              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+            />
+          </div>
+        </div>
+        <div className="mt-3">
+          <label className="text-xs text-gray-500">振込先情報</label>
+          <textarea
+            value={localSettings.bankInfo}
+            onChange={(e) => setLocalSettings((p) => ({ ...p, bankInfo: e.target.value }))}
+            placeholder="例: 三菱UFJ銀行 渋谷支店 普通 1234567 カ）オオクチシンケイセイタイイン"
+            rows={3}
+            className="w-full px-3 py-2 border rounded-lg text-sm mt-1 resize-none"
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleSave}
+        className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition"
+      >
+        {saved ? "保存しました" : "設定を保存"}
+      </button>
     </div>
   );
 }
