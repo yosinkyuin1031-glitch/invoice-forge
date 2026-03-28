@@ -602,7 +602,20 @@ function LoginView() {
               {isSignUp ? "ログイン" : "新規登録"}
             </button>
           </p>
+          {isSignUp && (
+            <p className="text-center text-xs text-gray-400">
+              登録することで
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline mx-1">利用規約</a>
+              および
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline mx-1">プライバシーポリシー</a>
+              に同意したものとみなします。
+            </p>
+          )}
         </form>
+        <div className="mt-4 flex justify-center gap-4 text-xs text-gray-400">
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:underline">利用規約</a>
+          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:underline">プライバシーポリシー</a>
+        </div>
       </div>
     </div>
   );
@@ -1318,9 +1331,57 @@ function InvoicePreview({
   onStatusChange: (status: Invoice["status"]) => void;
 }) {
   const printRef = useRef<HTMLDivElement>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!printRef.current) return;
+    setPdfLoading(true);
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+
+      const canvas = await html2canvas(printRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      if (imgHeight <= pageHeight) {
+        pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
+      } else {
+        // 複数ページ対応
+        let yOffset = 0;
+        while (yOffset < imgHeight) {
+          if (yOffset > 0) pdf.addPage();
+          pdf.addImage(imgData, "PNG", 0, -yOffset, imgWidth, imgHeight);
+          yOffset += pageHeight;
+        }
+      }
+
+      const filename = `請求書_${invoice.invoiceNumber}_${invoice.clientName || "取引先"}.pdf`;
+      pdf.save(filename);
+    } catch {
+      alert("PDFの生成に失敗しました。ブラウザ印刷をご利用ください。");
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   const buildMessageText = () => {
@@ -1391,11 +1452,19 @@ function InvoicePreview({
               編集
             </button>
             <button
-              onClick={handlePrint}
-              aria-label="PDFまたは印刷"
-              className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              onClick={handleDownloadPDF}
+              disabled={pdfLoading}
+              aria-label="PDFをダウンロード"
+              className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
             >
-              PDF / 印刷
+              {pdfLoading ? "生成中..." : "PDF保存"}
+            </button>
+            <button
+              onClick={handlePrint}
+              aria-label="印刷する"
+              className="px-4 py-1.5 text-xs bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium"
+            >
+              印刷
             </button>
             <button
               onClick={handleSendLINE}

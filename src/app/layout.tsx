@@ -2,8 +2,25 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "InvoiceForge - BtoB請求書管理",
-  description: "BtoB取引・物販向けの請求書作成管理ツール。取引先管理・商品マスター・売上分析・PDF出力対応。",
+  title: "InvoiceForge - 請求書作成システム",
+  description: "治療院・サロン向けの請求書作成・管理・分析システム。消費税自動計算、PDF出力、売上分析機能搭載",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/favicon.ico",
+  },
+  openGraph: {
+    title: "InvoiceForge - 請求書作成システム",
+    description: "治療院・サロン向けの請求書作成・管理・分析システム。消費税自動計算、PDF出力、売上分析機能搭載",
+    type: "website",
+    locale: "ja_JP",
+    siteName: "InvoiceForge",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "InvoiceForge - 請求書作成システム",
+    description: "治療院・サロン向けの請求書作成・管理・分析システム。消費税自動計算、PDF出力、売上分析機能搭載",
+  },
 };
 
 export default function RootLayout({
