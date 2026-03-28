@@ -28,6 +28,8 @@ import {
   saveProduct as persistProduct,
   deleteProduct as removeProduct,
 } from "@/lib/storage";
+import { ToastContainer, useToast } from "@/components/ui/Toast";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics";
 
@@ -45,6 +47,9 @@ export default function InvoiceApp() {
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "sent" | "paid">("all");
   const [loaded, setLoaded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const { toasts, removeToast, showSuccess, showError } = useToast();
+  const { confirm, dialogProps } = useConfirmDialog();
 
   // Auth check
   useEffect(() => {
@@ -76,10 +81,11 @@ export default function InvoiceApp() {
       setClients(cls);
       setProducts(prds);
       setLoaded(true);
-    }).catch((err) => {
-      console.error("Failed to load data:", err);
+    }).catch(() => {
+      showError("データの読み込みに失敗しました");
       setLoaded(true);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const reloadData = useCallback(async () => {
@@ -137,36 +143,72 @@ export default function InvoiceApp() {
 
   const handleSaveInvoice = useCallback(async () => {
     if (!currentInvoice || !user) return;
-    const updated = { ...currentInvoice, updatedAt: new Date().toISOString() };
-    await persistInvoice(updated, user.id);
-    await reloadData();
-    setView("list");
-    setCurrentInvoice(null);
-  }, [currentInvoice, user, reloadData]);
+
+    // バリデーション
+    if (!currentInvoice.clientName.trim()) {
+      showError("取引先名を入力してください");
+      return;
+    }
+    if (currentInvoice.items.length === 0) {
+      showError("品目を1つ以上追加してください");
+      return;
+    }
+    const hasInvalidItem = currentInvoice.items.some((item) => item.unitPrice <= 0);
+    if (hasInvalidItem) {
+      showError("品目の単価は1円以上を入力してください");
+      return;
+    }
+
+    try {
+      const updated = { ...currentInvoice, updatedAt: new Date().toISOString() };
+      await persistInvoice(updated, user.id);
+      await reloadData();
+      showSuccess("請求書を保存しました");
+      setView("list");
+      setCurrentInvoice(null);
+    } catch {
+      showError("保存に失敗しました。もう一度お試しください");
+    }
+  }, [currentInvoice, user, reloadData, showSuccess, showError]);
 
   const handleDeleteInvoice = useCallback(async (id: string) => {
-    if (!confirm("この請求書を削除しますか?")) return;
-    await removeInvoice(id);
-    await reloadData();
-  }, [reloadData]);
+    const ok = await confirm({
+      title: "請求書を削除",
+      message: "この請求書を削除しますか？この操作は取り消せません。",
+      confirmLabel: "削除する",
+    });
+    if (!ok) return;
+    try {
+      await removeInvoice(id);
+      await reloadData();
+      showSuccess("請求書を削除しました");
+    } catch {
+      showError("削除に失敗しました");
+    }
+  }, [confirm, reloadData, showSuccess, showError]);
 
   const handleDuplicateInvoice = useCallback(async (inv: Invoice) => {
     if (!user) return;
-    const invoiceNumber = await generateInvoiceNumber(user.id);
-    const newInv: Invoice = {
-      ...inv,
-      id: `inv-${Date.now()}`,
-      invoiceNumber,
-      issueDate: new Date().toISOString().split("T")[0],
-      dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
-      status: "draft",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      items: inv.items.map((i) => ({ ...i, id: `item-${Date.now()}-${Math.random()}` })),
-    };
-    await persistInvoice(newInv, user.id);
-    await reloadData();
-  }, [user, reloadData]);
+    try {
+      const invoiceNumber = await generateInvoiceNumber(user.id);
+      const newInv: Invoice = {
+        ...inv,
+        id: `inv-${Date.now()}`,
+        invoiceNumber,
+        issueDate: new Date().toISOString().split("T")[0],
+        dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+        status: "draft",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        items: inv.items.map((i) => ({ ...i, id: `item-${Date.now()}-${Math.random()}` })),
+      };
+      await persistInvoice(newInv, user.id);
+      await reloadData();
+      showSuccess("請求書を複製しました");
+    } catch {
+      showError("複製に失敗しました");
+    }
+  }, [user, reloadData, showSuccess, showError]);
 
   // Filter invoices
   const filteredInvoices = invoices.filter((inv) => {
@@ -203,10 +245,46 @@ export default function InvoiceApp() {
 
   if (!loaded) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-gray-400">データを読み込み中...</p>
+      <div className="min-h-screen bg-gray-50 flex">
+        <aside className="hidden md:flex md:flex-col md:w-56 bg-white border-r min-h-screen">
+          <div className="px-4 py-4 border-b">
+            <div className="h-5 w-32 bg-gray-200 rounded animate-pulse" />
+            <div className="h-3 w-24 bg-gray-100 rounded animate-pulse mt-2" />
+          </div>
+          <nav className="flex-1 px-2 py-3 space-y-2">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />
+            ))}
+          </nav>
+        </aside>
+        <div className="flex-1 px-4 py-4 max-w-4xl mx-auto w-full">
+          <div className="flex items-center justify-between mb-4">
+            <div className="h-6 w-28 bg-gray-200 rounded animate-pulse" />
+            <div className="h-9 w-24 bg-blue-200 rounded-lg animate-pulse" />
+          </div>
+          <div className="h-10 w-full bg-gray-100 rounded-lg animate-pulse mb-4" />
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-white rounded-xl p-4 border">
+                <div className="h-3 w-12 bg-gray-200 rounded animate-pulse mb-2" />
+                <div className="h-6 w-16 bg-gray-200 rounded animate-pulse" />
+              </div>
+            ))}
+          </div>
+          <div className="space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="bg-white rounded-xl border p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <div className="h-4 w-36 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-3 w-28 bg-gray-100 rounded animate-pulse" />
+                  </div>
+                  <div className="h-5 w-14 bg-gray-100 rounded-full animate-pulse" />
+                </div>
+                <div className="h-5 w-24 bg-gray-200 rounded animate-pulse mt-3" />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -215,42 +293,56 @@ export default function InvoiceApp() {
   // Views that use their own layout
   if ((view === "create" || view === "edit") && currentInvoice) {
     return (
-      <InvoiceEditor
-        invoice={currentInvoice}
-        clients={clients}
-        products={products}
-        onUpdate={setCurrentInvoice}
-        onSave={handleSaveInvoice}
-        onCancel={() => { setView("list"); setCurrentInvoice(null); }}
-        calcSubtotal={calcSubtotal}
-        calcTax={calcTax}
-        calcTotal={calcTotal}
-        formatCurrency={formatCurrency}
-        isNew={view === "create"}
-        userId={user.id}
-      />
+      <>
+        <InvoiceEditor
+          invoice={currentInvoice}
+          clients={clients}
+          products={products}
+          onUpdate={setCurrentInvoice}
+          onSave={handleSaveInvoice}
+          onCancel={() => { setView("list"); setCurrentInvoice(null); }}
+          calcSubtotal={calcSubtotal}
+          calcTax={calcTax}
+          calcTotal={calcTotal}
+          formatCurrency={formatCurrency}
+          isNew={view === "create"}
+          userId={user.id}
+          showSuccess={showSuccess}
+          showError={showError}
+        />
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
     );
   }
 
   if (view === "preview" && currentInvoice) {
     return (
-      <InvoicePreview
-        invoice={currentInvoice}
-        calcSubtotal={calcSubtotal}
-        calcTax={calcTax}
-        calcTotal={calcTotal}
-        formatCurrency={formatCurrency}
-        bankInfo={settings.bankInfo}
-        onBack={() => { setView("list"); setCurrentInvoice(null); }}
-        onEdit={() => handleEditInvoice(currentInvoice)}
-        onStatusChange={async (status) => {
-          if (!user) return;
-          const updated = { ...currentInvoice, status, updatedAt: new Date().toISOString() };
-          await persistInvoice(updated, user.id);
-          await reloadData();
-          setCurrentInvoice(updated);
-        }}
-      />
+      <>
+        <InvoicePreview
+          invoice={currentInvoice}
+          calcSubtotal={calcSubtotal}
+          calcTax={calcTax}
+          calcTotal={calcTotal}
+          formatCurrency={formatCurrency}
+          bankInfo={settings.bankInfo}
+          onBack={() => { setView("list"); setCurrentInvoice(null); }}
+          onEdit={() => handleEditInvoice(currentInvoice)}
+          onStatusChange={async (status) => {
+            if (!user) return;
+            try {
+              const updated = { ...currentInvoice, status, updatedAt: new Date().toISOString() };
+              await persistInvoice(updated, user.id);
+              await reloadData();
+              setCurrentInvoice(updated);
+              const label = status === "paid" ? "入金済" : status === "sent" ? "送付済" : "下書き";
+              showSuccess(`ステータスを「${label}」に変更しました`);
+            } catch {
+              showError("ステータスの変更に失敗しました");
+            }
+          }}
+        />
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
     );
   }
 
@@ -290,6 +382,7 @@ export default function InvoiceApp() {
           <p className="text-xs text-gray-400 truncate mb-2">{user.email}</p>
           <button
             onClick={signOut}
+            aria-label="ログアウト"
             className="text-xs text-red-500 hover:text-red-700"
           >
             ログアウト
@@ -301,13 +394,13 @@ export default function InvoiceApp() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="fixed inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} />
-          <aside className="fixed left-0 top-0 bottom-0 w-64 bg-white z-50 flex flex-col">
+          <aside className="fixed left-0 top-0 bottom-0 w-64 bg-white z-50 flex flex-col" aria-label="モバイルナビゲーション">
             <div className="px-4 py-4 border-b flex items-center justify-between">
               <div>
                 <h1 className="text-lg font-bold text-gray-800">InvoiceForge</h1>
                 <p className="text-xs text-gray-400">BtoB請求書管理</p>
               </div>
-              <button onClick={() => setSidebarOpen(false)} className="text-gray-500 text-xl">&times;</button>
+              <button onClick={() => setSidebarOpen(false)} aria-label="メニューを閉じる" className="text-gray-500 text-xl">&times;</button>
             </div>
             <nav className="flex-1 px-2 py-3 space-y-1">
               {navItems.map((item) => (
@@ -337,7 +430,7 @@ export default function InvoiceApp() {
         {/* Mobile header */}
         <header className="md:hidden bg-white border-b sticky top-0 z-10">
           <div className="px-4 py-3 flex items-center justify-between">
-            <button onClick={() => setSidebarOpen(true)} className="text-gray-600 text-xl">&#9776;</button>
+            <button onClick={() => setSidebarOpen(true)} aria-label="メニューを開く" className="text-gray-600 text-xl">&#9776;</button>
             <h1 className="text-sm font-bold text-gray-800">InvoiceForge</h1>
             <div className="w-6" />
           </div>
@@ -361,26 +454,6 @@ export default function InvoiceApp() {
           />
         )}
 
-        {view === "clients" && (
-          <ClientsView
-            clients={clients}
-            invoices={invoices}
-            userId={user.id}
-            onReload={reloadData}
-            calcTotal={calcTotal}
-            formatCurrency={formatCurrency}
-          />
-        )}
-
-        {view === "products" && (
-          <ProductsView
-            products={products}
-            userId={user.id}
-            onReload={reloadData}
-            formatCurrency={formatCurrency}
-          />
-        )}
-
         {view === "analytics" && (
           <AnalyticsView
             invoices={invoices}
@@ -397,13 +470,48 @@ export default function InvoiceApp() {
             userId={user.id}
             onSaveSettings={async (s) => {
               if (!user) return;
-              await persistSettings(s, user.id);
-              setSettings(s);
+              try {
+                await persistSettings(s, user.id);
+                setSettings(s);
+                showSuccess("設定を保存しました");
+              } catch {
+                showError("設定の保存に失敗しました");
+              }
             }}
             onBack={() => setView("list")}
           />
         )}
+
+        {view === "clients" && (
+          <ClientsView
+            clients={clients}
+            invoices={invoices}
+            userId={user.id}
+            onReload={reloadData}
+            calcTotal={calcTotal}
+            formatCurrency={formatCurrency}
+            showSuccess={showSuccess}
+            showError={showError}
+            confirm={confirm}
+          />
+        )}
+
+        {view === "products" && (
+          <ProductsView
+            products={products}
+            userId={user.id}
+            onReload={reloadData}
+            formatCurrency={formatCurrency}
+            showSuccess={showSuccess}
+            showError={showError}
+            confirm={confirm}
+          />
+        )}
       </div>
+
+      {/* Toast & ConfirmDialog */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }
@@ -451,24 +559,28 @@ function LoginView() {
           {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
           {message && <p className="text-sm text-green-600 bg-green-50 rounded-lg p-3">{message}</p>}
           <div>
-            <label className="text-xs text-gray-500">メールアドレス</label>
+            <label htmlFor="login-email" className="text-xs text-gray-500">メールアドレス</label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              aria-label="メールアドレス"
               className="w-full px-3 py-2 border rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
               placeholder="mail@example.com"
             />
           </div>
           <div>
-            <label className="text-xs text-gray-500">パスワード</label>
+            <label htmlFor="login-password" className="text-xs text-gray-500">パスワード</label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
+              aria-label="パスワード"
               className="w-full px-3 py-2 border rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
               placeholder="6文字以上"
             />
@@ -548,11 +660,13 @@ function InvoiceListView({
           placeholder="検索（取引先名・番号・商品名）"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
+          aria-label="請求書を検索"
           className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
         />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          aria-label="ステータスで絞り込み"
           className="px-3 py-2 border rounded-lg text-sm bg-white"
         >
           <option value="all">全て</option>
@@ -637,24 +751,28 @@ function InvoiceListView({
               <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={() => handlePreviewInvoice(inv)}
+                  aria-label={`${inv.invoiceNumber}をプレビュー`}
                   className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
                 >
                   プレビュー
                 </button>
                 <button
                   onClick={() => handleEditInvoice(inv)}
+                  aria-label={`${inv.invoiceNumber}を編集`}
                   className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
                 >
                   編集
                 </button>
                 <button
                   onClick={() => handleDuplicateInvoice(inv)}
+                  aria-label={`${inv.invoiceNumber}を複製`}
                   className="px-3 py-1 text-xs bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100"
                 >
                   複製
                 </button>
                 <button
                   onClick={() => handleDeleteInvoice(inv.id)}
+                  aria-label={`${inv.invoiceNumber}を削除`}
                   className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
                 >
                   削除
@@ -682,6 +800,8 @@ function InvoiceEditor({
   formatCurrency,
   isNew,
   userId,
+  showSuccess,
+  showError,
 }: {
   invoice: Invoice;
   clients: Client[];
@@ -695,6 +815,8 @@ function InvoiceEditor({
   formatCurrency: (n: number) => string;
   isNew: boolean;
   userId: string;
+  showSuccess: (msg: string) => void;
+  showError: (msg: string) => void;
 }) {
   const [showProducts, setShowProducts] = useState(false);
   const [showClientPicker, setShowClientPicker] = useState(false);
@@ -751,14 +873,18 @@ function InvoiceEditor({
   };
 
   const handleAddNewClient = async () => {
-    if (!newClient.companyName) return;
+    if (!newClient.companyName) {
+      showError("会社名/院名を入力してください");
+      return;
+    }
     try {
       const saved = await persistClient(newClient as Client, userId);
       selectClient(saved);
       setNewClientMode(false);
       setNewClient({});
-    } catch (err) {
-      console.error(err);
+      showSuccess("取引先を追加しました");
+    } catch {
+      showError("取引先の追加に失敗しました");
     }
   };
 
@@ -766,7 +892,7 @@ function InvoiceEditor({
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={onCancel} className="text-sm text-gray-600 hover:text-gray-800">
+          <button onClick={onCancel} aria-label="一覧へ戻る" className="text-sm text-gray-600 hover:text-gray-800">
             &larr; 戻る
           </button>
           <h2 className="text-sm font-bold text-gray-800">
@@ -774,6 +900,7 @@ function InvoiceEditor({
           </h2>
           <button
             onClick={onSave}
+            aria-label="請求書を保存"
             className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
           >
             保存
@@ -913,14 +1040,22 @@ function InvoiceEditor({
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500">会社名/院名</label>
+                <label className="text-xs text-gray-500">会社名/院名 <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={invoice.clientName}
                   onChange={(e) => updateField("clientName", e.target.value)}
                   placeholder="例: 株式会社ABC"
-                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                  required
+                  aria-required="true"
+                  aria-label="取引先の会社名/院名"
+                  className={`w-full px-3 py-2 border rounded-lg text-sm mt-1 ${
+                    invoice.clientName.trim() === "" ? "border-red-300 focus:ring-red-300 focus:border-red-400" : ""
+                  }`}
                 />
+                {invoice.clientName.trim() === "" && (
+                  <p className="text-xs text-red-500 mt-1" role="alert">取引先名は必須です</p>
+                )}
               </div>
               <div>
                 <label className="text-xs text-gray-500">郵便番号</label>
@@ -1016,12 +1151,14 @@ function InvoiceEditor({
             <div className="flex gap-2">
               <button
                 onClick={() => setShowProducts(!showProducts)}
+                aria-label="商品マスターから明細に追加"
                 className="px-3 py-1 text-xs bg-green-50 text-green-600 rounded-lg hover:bg-green-100"
               >
                 商品から追加
               </button>
               <button
                 onClick={addItem}
+                aria-label="明細行を追加"
                 className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
               >
                 + 行追加
@@ -1059,6 +1196,7 @@ function InvoiceEditor({
                   {invoice.items.length > 1 && (
                     <button
                       onClick={() => removeItem(item.id)}
+                      aria-label={`明細${idx + 1}を削除`}
                       className="text-xs text-red-500 hover:text-red-700"
                     >
                       削除
@@ -1070,7 +1208,10 @@ function InvoiceEditor({
                   value={item.name}
                   onChange={(e) => updateItem(item.id, "name", e.target.value)}
                   placeholder="商品名・サービス名"
-                  className="w-full px-3 py-2 border rounded-lg text-sm mb-2"
+                  aria-label={`明細${idx + 1}の品名`}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm mb-2 ${
+                    item.name.trim() === "" ? "border-red-300" : ""
+                  }`}
                 />
                 <div className="grid grid-cols-3 gap-2">
                   <div>
@@ -1228,13 +1369,14 @@ function InvoicePreview({
       {/* Controls (hidden on print) */}
       <header className="bg-white border-b sticky top-0 z-10 print:hidden">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={onBack} className="text-sm text-gray-600 hover:text-gray-800">
+          <button onClick={onBack} aria-label="請求書一覧へ戻る" className="text-sm text-gray-600 hover:text-gray-800">
             &larr; 一覧へ
           </button>
           <div className="flex gap-2 flex-wrap justify-end">
             <select
               value={invoice.status}
               onChange={(e) => onStatusChange(e.target.value as Invoice["status"])}
+              aria-label="請求書のステータスを変更"
               className="px-3 py-1.5 text-xs border rounded-lg bg-white"
             >
               <option value="draft">下書き</option>
@@ -1243,24 +1385,28 @@ function InvoicePreview({
             </select>
             <button
               onClick={onEdit}
+              aria-label="請求書を編集"
               className="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
             >
               編集
             </button>
             <button
               onClick={handlePrint}
+              aria-label="PDFまたは印刷"
               className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
             >
               PDF / 印刷
             </button>
             <button
               onClick={handleSendLINE}
+              aria-label="LINEで請求書を送信"
               className="px-4 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium"
             >
               LINEで送る
             </button>
             <button
               onClick={handleSendEmail}
+              aria-label="メールで請求書を送信"
               className="px-4 py-1.5 text-xs bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium"
             >
               メールで送る
@@ -1414,6 +1560,9 @@ function ClientsView({
   onReload,
   calcTotal,
   formatCurrency,
+  showSuccess,
+  showError,
+  confirm,
 }: {
   clients: Client[];
   invoices: Invoice[];
@@ -1421,6 +1570,9 @@ function ClientsView({
   onReload: () => Promise<void>;
   calcTotal: (items: InvoiceItem[]) => number;
   formatCurrency: (n: number) => string;
+  showSuccess: (msg: string) => void;
+  showError: (msg: string) => void;
+  confirm: (opts: { title: string; message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState<Partial<Client> | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1434,17 +1586,35 @@ function ClientsView({
   );
 
   const handleSave = async () => {
-    if (!editing || !editing.companyName) return;
-    await persistClient(editing as Client, userId);
-    await onReload();
-    setEditing(null);
+    if (!editing || !editing.companyName) {
+      showError("会社名/院名を入力してください");
+      return;
+    }
+    try {
+      await persistClient(editing as Client, userId);
+      await onReload();
+      setEditing(null);
+      showSuccess(editing.id ? "取引先を更新しました" : "取引先を追加しました");
+    } catch {
+      showError("保存に失敗しました");
+    }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("この取引先を削除しますか?")) return;
-    await removeClient(id);
-    await onReload();
-    if (selectedClient?.id === id) setSelectedClient(null);
+    const ok = await confirm({
+      title: "取引先を削除",
+      message: "この取引先を削除しますか？この操作は取り消せません。",
+      confirmLabel: "削除する",
+    });
+    if (!ok) return;
+    try {
+      await removeClient(id);
+      await onReload();
+      if (selectedClient?.id === id) setSelectedClient(null);
+      showSuccess("取引先を削除しました");
+    } catch {
+      showError("削除に失敗しました");
+    }
   };
 
   // Client's invoice history
@@ -1470,6 +1640,7 @@ function ClientsView({
         placeholder="取引先を検索..."
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
+        aria-label="取引先を検索"
         className="w-full px-3 py-2 border rounded-lg text-sm mb-4 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
       />
 
@@ -1481,13 +1652,21 @@ function ClientsView({
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-500">会社名/院名 *</label>
+              <label className="text-xs text-gray-500">会社名/院名 <span className="text-red-500">*</span></label>
               <input
                 type="text"
                 value={editing.companyName || ""}
                 onChange={(e) => setEditing({ ...editing, companyName: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                required
+                aria-required="true"
+                aria-label="取引先の会社名/院名"
+                className={`w-full px-3 py-2 border rounded-lg text-sm mt-1 ${
+                  (editing.companyName || "").trim() === "" ? "border-red-300" : ""
+                }`}
               />
+              {(editing.companyName || "").trim() === "" && (
+                <p className="text-xs text-red-500 mt-1" role="alert">会社名/院名は必須です</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-500">担当者名</label>
@@ -1659,11 +1838,17 @@ function ProductsView({
   userId,
   onReload,
   formatCurrency,
+  showSuccess,
+  showError,
+  confirm,
 }: {
   products: Product[];
   userId: string;
   onReload: () => Promise<void>;
   formatCurrency: (n: number) => string;
+  showSuccess: (msg: string) => void;
+  showError: (msg: string) => void;
+  confirm: (opts: { title: string; message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState<Partial<Product> | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<"all" | "product" | "service" | "other">("all");
@@ -1673,16 +1858,34 @@ function ProductsView({
   );
 
   const handleSave = async () => {
-    if (!editing || !editing.name) return;
-    await persistProduct(editing as Product, userId);
-    await onReload();
-    setEditing(null);
+    if (!editing || !editing.name) {
+      showError("商品名/サービス名を入力してください");
+      return;
+    }
+    try {
+      await persistProduct(editing as Product, userId);
+      await onReload();
+      setEditing(null);
+      showSuccess(editing.id ? "商品を更新しました" : "商品を追加しました");
+    } catch {
+      showError("保存に失敗しました");
+    }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("この商品を削除しますか?")) return;
-    await removeProduct(id);
-    await onReload();
+    const ok = await confirm({
+      title: "商品を削除",
+      message: "この商品を削除しますか？この操作は取り消せません。",
+      confirmLabel: "削除する",
+    });
+    if (!ok) return;
+    try {
+      await removeProduct(id);
+      await onReload();
+      showSuccess("商品を削除しました");
+    } catch {
+      showError("削除に失敗しました");
+    }
   };
 
   const categoryLabel = (cat: string) => {
@@ -1731,13 +1934,21 @@ function ProductsView({
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-500">商品名/サービス名 *</label>
+              <label className="text-xs text-gray-500">商品名/サービス名 <span className="text-red-500">*</span></label>
               <input
                 type="text"
                 value={editing.name || ""}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                required
+                aria-required="true"
+                aria-label="商品名/サービス名"
+                className={`w-full px-3 py-2 border rounded-lg text-sm mt-1 ${
+                  (editing.name || "").trim() === "" ? "border-red-300" : ""
+                }`}
               />
+              {(editing.name || "").trim() === "" && (
+                <p className="text-xs text-red-500 mt-1" role="alert">商品名/サービス名は必須です</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-500">カテゴリ</label>
@@ -2216,6 +2427,7 @@ function SettingsView({
                 <img src={localSettings.clinicLogo} alt="Logo" className="w-24 h-24 object-contain border rounded-lg" />
                 <button
                   onClick={() => setLocalSettings((p) => ({ ...p, clinicLogo: "" }))}
+                  aria-label="ロゴ画像を削除"
                   className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
                 >
                   x
@@ -2224,6 +2436,7 @@ function SettingsView({
             ) : (
               <button
                 onClick={() => logoInputRef.current?.click()}
+                aria-label="ロゴ画像をアップロード"
                 className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
               >
                 +
@@ -2244,6 +2457,7 @@ function SettingsView({
                 <img src={localSettings.clinicStamp} alt="Stamp" className="w-24 h-24 object-contain border rounded-lg" />
                 <button
                   onClick={() => setLocalSettings((p) => ({ ...p, clinicStamp: "" }))}
+                  aria-label="印影画像を削除"
                   className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
                 >
                   x
@@ -2252,6 +2466,7 @@ function SettingsView({
             ) : (
               <button
                 onClick={() => stampInputRef.current?.click()}
+                aria-label="印影画像をアップロード"
                 className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
               >
                 +
