@@ -390,3 +390,37 @@ function mapProduct(p: Record<string, unknown>): Product {
     updatedAt: p.updated_at as string,
   };
 }
+
+// ===== EC ORDERS =====
+export interface EcOrder {
+  id: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  shippingAddress: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  totalAmount: number;
+  items: { product_id: string; product_name: string; quantity: number; unit_price: number }[];
+  createdAt: string;
+}
+
+export async function getEcOrders(): Promise<EcOrder[]> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map((o) => ({
+    id: o.id,
+    customerName: o.customer_name,
+    customerEmail: o.customer_email,
+    customerPhone: o.customer_phone,
+    shippingAddress: o.shipping_address,
+    paymentMethod: o.payment_method,
+    paymentStatus: o.payment_status,
+    totalAmount: o.total_amount,
+    items: typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []),
+    createdAt: o.created_at,
+  }));
+}

@@ -27,11 +27,13 @@ import {
   getProducts as fetchProducts,
   saveProduct as persistProduct,
   deleteProduct as removeProduct,
+  getEcOrders as fetchEcOrders,
+  EcOrder,
 } from "@/lib/storage";
 import { ToastContainer, useToast } from "@/components/ui/Toast";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
-type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics";
+type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics" | "ec-orders";
 
 // ===== MAIN APP =====
 export default function InvoiceApp() {
@@ -42,6 +44,7 @@ export default function InvoiceApp() {
   const [settings, setSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [ecOrders, setEcOrders] = useState<EcOrder[]>([]);
   const [currentInvoice, setCurrentInvoice] = useState<Invoice | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "sent" | "paid">("all");
@@ -75,11 +78,13 @@ export default function InvoiceApp() {
       fetchSettings(user.id),
       fetchClients(),
       fetchProducts(),
-    ]).then(([invs, sets, cls, prds]) => {
+      fetchEcOrders().catch(() => [] as EcOrder[]),
+    ]).then(([invs, sets, cls, prds, eos]) => {
       setInvoices(invs);
       setSettings(sets);
       setClients(cls);
       setProducts(prds);
+      setEcOrders(eos);
       setLoaded(true);
     }).catch(() => {
       showError("データの読み込みに失敗しました");
@@ -90,14 +95,16 @@ export default function InvoiceApp() {
 
   const reloadData = useCallback(async () => {
     if (!user) return;
-    const [invs, cls, prds] = await Promise.all([
+    const [invs, cls, prds, eos] = await Promise.all([
       fetchInvoices(),
       fetchClients(),
       fetchProducts(),
+      fetchEcOrders().catch(() => [] as EcOrder[]),
     ]);
     setInvoices(invs);
     setClients(cls);
     setProducts(prds);
+    setEcOrders(eos);
   }, [user]);
 
   // Create new invoice
@@ -209,6 +216,47 @@ export default function InvoiceApp() {
       showError("複製に失敗しました");
     }
   }, [user, reloadData, showSuccess, showError]);
+
+  // Create invoice from EC order
+  const handleCreateInvoiceFromEc = useCallback(async (order: EcOrder) => {
+    if (!user) return;
+    try {
+      const now = new Date();
+      const invoiceNumber = await generateInvoiceNumber(user.id);
+      const invoice: Invoice = {
+        id: `inv-${Date.now()}`,
+        invoiceNumber,
+        issueDate: now.toISOString().split("T")[0],
+        dueDate: new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0],
+        clinicName: settings.clinicName,
+        clinicZip: settings.clinicZip,
+        clinicAddress: settings.clinicAddress,
+        clinicPhone: settings.clinicPhone,
+        clinicEmail: settings.clinicEmail,
+        clinicLogo: settings.clinicLogo,
+        clinicStamp: settings.clinicStamp,
+        clientName: order.customerName,
+        clientZip: "",
+        clientAddress: order.shippingAddress,
+        clientEmail: order.customerEmail,
+        items: order.items.map((item, idx) => ({
+          id: `item-${Date.now()}-${idx}`,
+          name: item.product_name,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          taxRate: 0.1,
+        })),
+        notes: `EC注文: ${order.id}`,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        status: "draft",
+      };
+      setCurrentInvoice(invoice);
+      setView("create");
+    } catch {
+      showError("請求書の作成に失敗しました");
+    }
+  }, [user, settings, showError]);
 
   // Filter invoices
   const filteredInvoices = invoices.filter((inv) => {
@@ -351,6 +399,7 @@ export default function InvoiceApp() {
     { key: "list", label: "請求書一覧" },
     { key: "clients", label: "取引先管理" },
     { key: "products", label: "商品管理" },
+    { key: "ec-orders", label: "EC注文" },
     { key: "analytics", label: "売上分析" },
     { key: "settings", label: "設定" },
   ];
@@ -505,6 +554,16 @@ export default function InvoiceApp() {
             showSuccess={showSuccess}
             showError={showError}
             confirm={confirm}
+          />
+        )}
+
+        {view === "ec-orders" && (
+          <EcOrdersView
+            ecOrders={ecOrders}
+            invoices={invoices}
+            settings={settings}
+            formatCurrency={formatCurrency}
+            onCreateInvoice={handleCreateInvoiceFromEc}
           />
         )}
       </div>
@@ -2616,6 +2675,149 @@ function SettingsView({
       >
         {saved ? "保存しました" : "設定を保存"}
       </button>
+    </div>
+  );
+}
+
+// ===== EC ORDERS VIEW =====
+function EcOrdersView({
+  ecOrders,
+  invoices,
+  settings: _settings,
+  formatCurrency,
+  onCreateInvoice,
+}: {
+  ecOrders: EcOrder[];
+  invoices: Invoice[];
+  settings: ClinicSettings;
+  formatCurrency: (n: number) => string;
+  onCreateInvoice: (order: EcOrder) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "paid">("all");
+
+  const hasInvoice = (orderId: string) =>
+    invoices.some((inv) => inv.notes?.includes(`EC注文: ${orderId}`));
+
+  const filtered = ecOrders.filter((o) => {
+    const matchSearch = !search || o.customerName.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === "all" || o.paymentStatus === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  const statusLabel = (s: string) => {
+    switch (s) {
+      case "paid": return "支払済";
+      case "pending": return "未払い";
+      case "failed": return "失敗";
+      default: return s;
+    }
+  };
+
+  const statusColor = (s: string) => {
+    switch (s) {
+      case "paid": return "bg-green-100 text-green-700";
+      case "pending": return "bg-yellow-100 text-yellow-700";
+      case "failed": return "bg-red-100 text-red-700";
+      default: return "bg-gray-100 text-gray-700";
+    }
+  };
+
+  const methodLabel = (m: string) => {
+    switch (m) {
+      case "stripe": return "カード決済";
+      case "bank_transfer": return "銀行振込";
+      default: return m;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <h2 className="text-lg font-bold text-gray-800">EC注文一覧</h2>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <input
+            type="text"
+            placeholder="顧客名で検索..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="px-3 py-2 border rounded-lg text-sm w-full sm:w-48"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "all" | "pending" | "paid")}
+            className="px-3 py-2 border rounded-lg text-sm"
+          >
+            <option value="all">全てのステータス</option>
+            <option value="pending">未払い</option>
+            <option value="paid">支払済</option>
+          </select>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 text-sm">
+          EC注文がありません
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((order) => {
+            const alreadyHasInvoice = hasInvoice(order.id);
+            return (
+              <div key={order.id} className="bg-white rounded-xl border p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-gray-800">{order.customerName}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor(order.paymentStatus)}`}>
+                        {statusLabel(order.paymentStatus)}
+                      </span>
+                      {alreadyHasInvoice && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">
+                          請求書作成済
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1 space-x-3">
+                      <span>{new Date(order.createdAt).toLocaleDateString("ja-JP")}</span>
+                      <span>{methodLabel(order.paymentMethod)}</span>
+                      <span>{order.customerEmail}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg font-bold text-gray-800">
+                      {formatCurrency(order.totalAmount)}
+                    </span>
+                    <button
+                      onClick={() => onCreateInvoice(order)}
+                      disabled={alreadyHasInvoice}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                        alreadyHasInvoice
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : "bg-blue-600 text-white hover:bg-blue-700"
+                      }`}
+                    >
+                      請求書を作成
+                    </button>
+                  </div>
+                </div>
+
+                {/* Order items */}
+                <div className="border-t pt-2">
+                  <div className="text-xs text-gray-500 space-y-1">
+                    {order.items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{item.product_name} x {item.quantity}</span>
+                        <span>{formatCurrency(item.unit_price * item.quantity)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
