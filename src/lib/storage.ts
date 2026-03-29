@@ -391,6 +391,32 @@ function mapProduct(p: Record<string, unknown>): Product {
   };
 }
 
+// ===== MENU ITEMS (from メニュー提案管理) =====
+export interface MenuMenuItem {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  unit: string;
+  duration?: number;
+}
+
+export async function getMenuItems(): Promise<MenuMenuItem[]> {
+  const { data, error } = await supabase
+    .from("mp_menu_items")
+    .select("id, name, category, price, unit, duration")
+    .order("sort_order", { ascending: true });
+  if (error) return [];
+  return (data || []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    category: m.category,
+    price: m.price,
+    unit: m.unit || '回',
+    duration: m.duration || undefined,
+  }));
+}
+
 // ===== EC ORDERS =====
 export interface EcOrder {
   id: string;

@@ -29,6 +29,8 @@ import {
   deleteProduct as removeProduct,
   getEcOrders as fetchEcOrders,
   EcOrder,
+  getMenuItems as fetchMenuItems,
+  MenuMenuItem,
 } from "@/lib/storage";
 import { ToastContainer, useToast } from "@/components/ui/Toast";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -45,6 +47,7 @@ export default function InvoiceApp() {
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [ecOrders, setEcOrders] = useState<EcOrder[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuMenuItem[]>([]);
   const [currentInvoice, setCurrentInvoice] = useState<Invoice | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "sent" | "paid">("all");
@@ -79,12 +82,14 @@ export default function InvoiceApp() {
       fetchClients(),
       fetchProducts(),
       fetchEcOrders().catch(() => [] as EcOrder[]),
-    ]).then(([invs, sets, cls, prds, eos]) => {
+      fetchMenuItems().catch(() => [] as MenuMenuItem[]),
+    ]).then(([invs, sets, cls, prds, eos, mis]) => {
       setInvoices(invs);
       setSettings(sets);
       setClients(cls);
       setProducts(prds);
       setEcOrders(eos);
+      setMenuItems(mis);
       setLoaded(true);
     }).catch(() => {
       showError("データの読み込みに失敗しました");
@@ -95,16 +100,18 @@ export default function InvoiceApp() {
 
   const reloadData = useCallback(async () => {
     if (!user) return;
-    const [invs, cls, prds, eos] = await Promise.all([
+    const [invs, cls, prds, eos, mis] = await Promise.all([
       fetchInvoices(),
       fetchClients(),
       fetchProducts(),
       fetchEcOrders().catch(() => [] as EcOrder[]),
+      fetchMenuItems().catch(() => [] as MenuMenuItem[]),
     ]);
     setInvoices(invs);
     setClients(cls);
     setProducts(prds);
     setEcOrders(eos);
+    setMenuItems(mis);
   }, [user]);
 
   // Create new invoice
@@ -346,6 +353,7 @@ export default function InvoiceApp() {
           invoice={currentInvoice}
           clients={clients}
           products={products}
+          menuItems={menuItems}
           onUpdate={setCurrentInvoice}
           onSave={handleSaveInvoice}
           onCancel={() => { setView("list"); setCurrentInvoice(null); }}
@@ -878,6 +886,7 @@ function InvoiceEditor({
   invoice: Invoice;
   clients: Client[];
   products: Product[];
+  menuItems?: MenuMenuItem[];
   onUpdate: (inv: Invoice) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -891,6 +900,7 @@ function InvoiceEditor({
   showError: (msg: string) => void;
 }) {
   const [showProducts, setShowProducts] = useState(false);
+  const [showMenuItems, setShowMenuItems] = useState(false);
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [newClientMode, setNewClientMode] = useState(false);
   const [newClient, setNewClient] = useState<Partial<Client>>({});
@@ -930,6 +940,20 @@ function InvoiceEditor({
       }],
     });
     setShowProducts(false);
+  };
+
+  const addFromMenuItem = (m: MenuMenuItem) => {
+    onUpdate({
+      ...invoice,
+      items: [...invoice.items, {
+        id: `item-${Date.now()}-${Math.random()}`,
+        name: m.name,
+        quantity: 1,
+        unitPrice: m.price,
+        taxRate: 0.1,
+      }],
+    });
+    setShowMenuItems(false);
   };
 
   const selectClient = (c: Client) => {
@@ -1221,8 +1245,17 @@ function InvoiceEditor({
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-700">明細</h3>
             <div className="flex gap-2">
+              {menuItems && menuItems.length > 0 && (
+                <button
+                  onClick={() => { setShowMenuItems(!showMenuItems); setShowProducts(false); }}
+                  aria-label="メニュー管理から明細に追加"
+                  className="px-3 py-1 text-xs bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100"
+                >
+                  メニューから追加
+                </button>
+              )}
               <button
-                onClick={() => setShowProducts(!showProducts)}
+                onClick={() => { setShowProducts(!showProducts); setShowMenuItems(false); }}
                 aria-label="商品マスターから明細に追加"
                 className="px-3 py-1 text-xs bg-green-50 text-green-600 rounded-lg hover:bg-green-100"
               >
@@ -1237,6 +1270,33 @@ function InvoiceEditor({
               </button>
             </div>
           </div>
+
+          {/* Menu Item Selector */}
+          {showMenuItems && menuItems && menuItems.length > 0 && (
+            <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200">
+              <p className="text-xs text-purple-700 font-medium mb-2">施術メニュー一覧（メニュー提案管理より）</p>
+              {['施術系', '物販系', 'オプション系'].map(cat => {
+                const catItems = menuItems.filter(m => m.category === cat);
+                if (catItems.length === 0) return null;
+                return (
+                  <div key={cat} className="mb-2">
+                    <p className="text-xs text-purple-500 mb-1">{cat}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {catItems.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => addFromMenuItem(m)}
+                          className="px-3 py-1.5 text-xs bg-white border border-purple-300 rounded-lg hover:bg-purple-100 transition"
+                        >
+                          {m.name}（{formatCurrency(m.price)}）
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Product Selector */}
           {showProducts && (
