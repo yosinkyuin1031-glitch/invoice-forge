@@ -871,6 +871,7 @@ function InvoiceEditor({
   invoice,
   clients,
   products,
+  menuItems,
   onUpdate,
   onSave,
   onCancel,
