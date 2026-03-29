@@ -1,6 +1,14 @@
 // Setup tables via Supabase Management API (SQL endpoint)
-const SUPABASE_URL = 'https://eofbclbqvahsirgqgcgo.supabase.co';
-const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvZmJjbGJxdmFoc2lyZ3FnY2dvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNDY2MzE3MywiZXhwIjoyMDUwMjM5MTczfQ.a8OfrUuXiOCfJNMVjKQ_rCDTjVXHgygI_FbBj0GZh0s';
+// Set these environment variables before running:
+//   SUPABASE_URL=https://your-project.supabase.co
+//   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+  console.error('Error: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables are required.');
+  process.exit(1);
+}
 
 async function runSQL(sql) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc`, {

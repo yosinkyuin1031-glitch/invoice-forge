@@ -1244,8 +1244,13 @@ function InvoiceEditor({
                       min={0}
                       value={item.unitPrice}
                       onChange={(e) => updateItem(item.id, "unitPrice", parseInt(e.target.value) || 0)}
-                      className="w-full px-3 py-2 border rounded-lg text-sm mt-0.5"
+                      className={`w-full px-3 py-2 border rounded-lg text-sm mt-0.5 ${
+                        item.unitPrice <= 0 ? "border-red-300" : ""
+                      }`}
                     />
+                    {item.unitPrice <= 0 && (
+                      <p className="text-xs text-red-500 mt-0.5">1円以上</p>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-gray-400">税率</label>
@@ -2408,7 +2413,20 @@ function SettingsView({
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const [imageError, setImageError] = useState("");
+
   const handleImageUpload = (field: "clinicLogo" | "clinicStamp", file: File) => {
+    setImageError("");
+    const allowedTypes = ["image/jpeg", "image/png"];
+    if (!allowedTypes.includes(file.type)) {
+      setImageError("JPGまたはPNG形式のみアップロードできます");
+      return;
+    }
+    const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+    if (file.size > MAX_SIZE) {
+      setImageError("ファイルサイズは2MB以下にしてください");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       setLocalSettings((prev) => ({ ...prev, [field]: e.target?.result as string }));
@@ -2488,6 +2506,10 @@ function SettingsView({
       {/* Logo & Stamp */}
       <div className="bg-white rounded-xl border p-4">
         <h3 className="text-sm font-bold text-gray-700 mb-3">ロゴ・印影</h3>
+        {imageError && (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg p-2 mb-3" role="alert">{imageError}</p>
+        )}
+        <p className="text-xs text-gray-400 mb-3">JPG/PNG形式、2MB以下</p>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-xs text-gray-500 block mb-2">ロゴ画像</label>
@@ -2514,7 +2536,7 @@ function SettingsView({
             <input
               ref={logoInputRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png"
               className="hidden"
               onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicLogo", e.target.files[0]); }}
             />
@@ -2544,7 +2566,7 @@ function SettingsView({
             <input
               ref={stampInputRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png"
               className="hidden"
               onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicStamp", e.target.files[0]); }}
             />
