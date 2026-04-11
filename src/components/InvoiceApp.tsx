@@ -37,7 +37,8 @@ import {
 import { ToastContainer, useToast } from "@/components/ui/Toast";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
-type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics" | "ec-orders";
+type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics" | "ec-orders" | "bulk-print";
+type BulkPrintMode = "invoice" | "receipt" | "both";
 
 // ===== MAIN APP =====
 export default function InvoiceApp() {
@@ -55,6 +56,8 @@ export default function InvoiceApp() {
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "sent" | "paid">("all");
   const [loaded, setLoaded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPrintMode, setBulkPrintMode] = useState<BulkPrintMode>("invoice");
 
   const { toasts, removeToast, showSuccess, showError } = useToast();
   const { confirm, dialogProps } = useConfirmDialog();
@@ -168,6 +171,24 @@ export default function InvoiceApp() {
     setCurrentInvoice(inv);
     setView("preview");
   }, []);
+
+  const handleToggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleBulkPrint = useCallback((mode: BulkPrintMode) => {
+    if (selectedIds.size === 0) {
+      showError("印刷する請求書を選択してください");
+      return;
+    }
+    setBulkPrintMode(mode);
+    setView("bulk-print");
+  }, [selectedIds, showError]);
 
   const handleSaveInvoice = useCallback(async () => {
     if (!currentInvoice || !user) return;
@@ -530,6 +551,24 @@ export default function InvoiceApp() {
             handleDeleteInvoice={handleDeleteInvoice}
             calcTotal={calcTotal}
             formatCurrency={formatCurrency}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
+            onClearSelection={() => setSelectedIds(new Set())}
+            onSelectAll={() => setSelectedIds(new Set(filteredInvoices.map((i) => i.id)))}
+            onBulkPrint={handleBulkPrint}
+          />
+        )}
+
+        {view === "bulk-print" && (
+          <BulkPrintView
+            invoices={invoices.filter((inv) => selectedIds.has(inv.id))}
+            profiles={profiles}
+            mode={bulkPrintMode}
+            calcSubtotal={calcSubtotal}
+            calcTax={calcTax}
+            calcTotal={calcTotal}
+            formatCurrency={formatCurrency}
+            onBack={() => setView("list")}
           />
         )}
 
@@ -744,6 +783,11 @@ function InvoiceListView({
   handleDeleteInvoice,
   calcTotal,
   formatCurrency,
+  selectedIds,
+  onToggleSelect,
+  onClearSelection,
+  onSelectAll,
+  onBulkPrint,
 }: {
   invoices: Invoice[];
   filteredInvoices: Invoice[];
@@ -758,6 +802,11 @@ function InvoiceListView({
   handleDeleteInvoice: (id: string) => void;
   calcTotal: (items: InvoiceItem[]) => number;
   formatCurrency: (n: number) => string;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onClearSelection: () => void;
+  onSelectAll: () => void;
+  onBulkPrint: (mode: BulkPrintMode) => void;
 }) {
   const thisMonth = new Date().toISOString().slice(0, 7);
 
@@ -796,6 +845,54 @@ function InvoiceListView({
           <option value="paid">入金済</option>
         </select>
       </div>
+
+      {/* Bulk selection toolbar */}
+      {filteredInvoices.length > 0 && (
+        <div className="bg-white rounded-xl border p-3 mb-3 flex items-center gap-2 flex-wrap">
+          <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={selectedIds.size > 0 && selectedIds.size === filteredInvoices.length}
+              onChange={(e) => (e.target.checked ? onSelectAll() : onClearSelection())}
+              className="w-4 h-4"
+            />
+            全選択
+          </label>
+          <span className="text-xs text-gray-500">
+            {selectedIds.size > 0 ? `${selectedIds.size}件選択中` : "チェックで一括印刷できます"}
+          </span>
+          <div className="flex-1" />
+          <button
+            onClick={() => onBulkPrint("invoice")}
+            disabled={selectedIds.size === 0}
+            className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+          >
+            請求書を一括印刷
+          </button>
+          <button
+            onClick={() => onBulkPrint("receipt")}
+            disabled={selectedIds.size === 0}
+            className="px-3 py-1.5 text-xs bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+          >
+            領収書を一括印刷
+          </button>
+          <button
+            onClick={() => onBulkPrint("both")}
+            disabled={selectedIds.size === 0}
+            className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+          >
+            請求書+領収書
+          </button>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={onClearSelection}
+              className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700"
+            >
+              解除
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid grid-cols-3 gap-3 mb-4">
@@ -843,16 +940,27 @@ function InvoiceListView({
           {filteredInvoices.map((inv) => (
             <div
               key={inv.id}
-              className="bg-white rounded-xl border p-4 hover:shadow-sm transition"
+              className={`bg-white rounded-xl border p-4 hover:shadow-sm transition ${
+                selectedIds.has(inv.id) ? "ring-2 ring-blue-400 border-blue-300" : ""
+              }`}
             >
               <div className="flex items-start justify-between mb-2">
-                <div>
-                  <p className="font-medium text-gray-800">
-                    {inv.clientName || "（取引先名未入力）"}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {inv.invoiceNumber} / {inv.issueDate}
-                  </p>
+                <div className="flex items-start gap-3 flex-1">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(inv.id)}
+                    onChange={() => onToggleSelect(inv.id)}
+                    aria-label={`${inv.invoiceNumber}を選択`}
+                    className="w-4 h-4 mt-1"
+                  />
+                  <div>
+                    <p className="font-medium text-gray-800">
+                      {inv.clientName || "（取引先名未入力）"}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {inv.invoiceNumber} / {inv.issueDate}
+                    </p>
+                  </div>
                 </div>
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -1967,6 +2075,236 @@ function InvoicePreview({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== BULK PRINT VIEW =====
+function BulkPrintView({
+  invoices,
+  profiles,
+  mode,
+  calcSubtotal,
+  calcTax,
+  calcTotal,
+  formatCurrency,
+  onBack,
+}: {
+  invoices: Invoice[];
+  profiles: BusinessProfile[];
+  mode: BulkPrintMode;
+  calcSubtotal: (items: InvoiceItem[]) => number;
+  calcTax: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[]) => number;
+  formatCurrency: (n: number) => string;
+  onBack: () => void;
+}) {
+  const handlePrint = () => window.print();
+
+  const modeLabel = mode === "invoice" ? "請求書" : mode === "receipt" ? "領収書" : "請求書+領収書";
+
+  const renderInvoiceDoc = (invoice: Invoice) => {
+    const profile = profiles.find((p) => p.id === invoice.profileId);
+    const taxExempt = profile?.taxMode === "exempt";
+    return (
+      <>
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-gray-800 tracking-widest">請 求 書</h1>
+        </div>
+        <div className="grid grid-cols-2 gap-8 mb-8">
+          <div>
+            <p className="text-xs text-gray-400 mb-1">請求先</p>
+            <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
+              <p className="text-lg font-bold">
+                {invoice.clientName || "（取引先名未入力）"} {invoice.clientType === "individual" ? "様" : "御中"}
+              </p>
+            </div>
+            {invoice.clientZip && <p className="text-xs text-gray-500">{invoice.clientZip}</p>}
+            {invoice.clientAddress && <p className="text-xs text-gray-500">{invoice.clientAddress}</p>}
+            <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
+              <p className="text-sm text-gray-600">ご請求金額</p>
+              <p className="text-2xl font-bold text-blue-700">{formatCurrency(calcTotal(invoice.items))}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-gray-400 mb-1">発行元</p>
+            {invoice.clinicLogo && (
+              <img src={invoice.clinicLogo} alt="Logo" className="w-20 h-20 object-contain ml-auto mb-2" />
+            )}
+            <p className="font-bold text-sm">{invoice.clinicName}</p>
+            {invoice.clinicZip && <p className="text-xs text-gray-500">{invoice.clinicZip}</p>}
+            {invoice.clinicAddress && <p className="text-xs text-gray-500">{invoice.clinicAddress}</p>}
+            {invoice.clinicPhone && <p className="text-xs text-gray-500">{invoice.clinicPhone}</p>}
+            {invoice.clinicStamp && (
+              <img src={invoice.clinicStamp} alt="印影" className="w-16 h-16 object-contain ml-auto mt-2 opacity-80" />
+            )}
+          </div>
+        </div>
+        <div className="flex gap-8 mb-6 text-sm">
+          <div><span className="text-gray-500">請求書番号: </span><span className="font-medium">{invoice.invoiceNumber}</span></div>
+          <div><span className="text-gray-500">発行日: </span><span className="font-medium">{invoice.issueDate}</span></div>
+          <div><span className="text-gray-500">支払期限: </span><span className="font-medium">{invoice.dueDate}</span></div>
+        </div>
+        <table className="w-full mb-6 text-sm">
+          <thead>
+            <tr className="bg-gray-800 text-white">
+              <th className="py-2 px-3 text-left font-medium">項目</th>
+              <th className="py-2 px-3 text-center font-medium w-16">数量</th>
+              <th className="py-2 px-3 text-right font-medium w-24">単価</th>
+              {!taxExempt && <th className="py-2 px-3 text-center font-medium w-16">税率</th>}
+              <th className="py-2 px-3 text-right font-medium w-28">金額</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoice.items.map((item, idx) => (
+              <tr key={item.id} className={idx % 2 === 0 ? "bg-gray-50" : ""}>
+                <td className="py-2 px-3">{item.name || "（未入力）"}</td>
+                <td className="py-2 px-3 text-center">{item.quantity}</td>
+                <td className="py-2 px-3 text-right">{formatCurrency(item.unitPrice)}</td>
+                {!taxExempt && <td className="py-2 px-3 text-center">{Math.round(item.taxRate * 100)}%</td>}
+                <td className="py-2 px-3 text-right font-medium">{formatCurrency(item.quantity * item.unitPrice)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex justify-end mb-6">
+          <div className="w-64">
+            {!taxExempt && (
+              <>
+                <div className="flex justify-between py-1 text-sm"><span className="text-gray-500">小計</span><span>{formatCurrency(calcSubtotal(invoice.items))}</span></div>
+                <div className="flex justify-between py-1 text-sm"><span className="text-gray-500">消費税</span><span>{formatCurrency(calcTax(invoice.items))}</span></div>
+              </>
+            )}
+            <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-gray-800 mt-1">
+              <span>合計{taxExempt ? "（非課税）" : ""}</span>
+              <span>{formatCurrency(calcTotal(invoice.items))}</span>
+            </div>
+          </div>
+        </div>
+        {profile?.bankInfo && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+            <p className="text-xs font-bold text-gray-600 mb-1">振込先</p>
+            <p className="text-sm whitespace-pre-line">{profile.bankInfo}</p>
+          </div>
+        )}
+        {invoice.notes && (
+          <div className="mb-4">
+            <p className="text-xs font-bold text-gray-600 mb-1">備考</p>
+            <p className="text-sm text-gray-600 whitespace-pre-line">{invoice.notes}</p>
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const renderReceiptDoc = (invoice: Invoice) => {
+    const profile = profiles.find((p) => p.id === invoice.profileId);
+    const taxExempt = profile?.taxMode === "exempt";
+    return (
+      <>
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-gray-800 tracking-widest">領 収 書</h1>
+        </div>
+        <div className="grid grid-cols-2 gap-8 mb-6">
+          <div>
+            <p className="text-xs text-gray-400 mb-1">宛名</p>
+            <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
+              <p className="text-lg font-bold">
+                {invoice.clientName || "（取引先名未入力）"} {invoice.clientType === "individual" ? "様" : "御中"}
+              </p>
+            </div>
+            <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
+              <p className="text-sm text-gray-600">領収金額</p>
+              <p className="text-2xl font-bold text-blue-700">{formatCurrency(calcTotal(invoice.items))}</p>
+              {taxExempt && <p className="text-xs text-gray-500 mt-1">（非課税）</p>}
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-gray-400 mb-1">発行元</p>
+            <p className="font-bold text-sm">{invoice.clinicName}</p>
+            {invoice.clinicZip && <p className="text-xs text-gray-500">{invoice.clinicZip}</p>}
+            {invoice.clinicAddress && <p className="text-xs text-gray-500">{invoice.clinicAddress}</p>}
+            {invoice.clinicPhone && <p className="text-xs text-gray-500">{invoice.clinicPhone}</p>}
+            {invoice.clinicStamp && (
+              <img src={invoice.clinicStamp} alt="印影" className="w-16 h-16 object-contain ml-auto mt-2 opacity-80" />
+            )}
+          </div>
+        </div>
+        <div className="flex gap-8 text-sm">
+          <div><span className="text-gray-500">発行日: </span><span className="font-medium">{invoice.issueDate}</span></div>
+          <div><span className="text-gray-500">番号: </span><span className="font-medium">{invoice.invoiceNumber}</span></div>
+        </div>
+        <p className="text-xs text-gray-500 mt-4">上記の通り正に領収いたしました。</p>
+        <p className="text-xs text-gray-400 mt-1">
+          但し: {invoice.items.map((i) => i.name).filter(Boolean).join("、") || "ご利用料金として"}
+        </p>
+      </>
+    );
+  };
+
+  // Build page list based on mode
+  const pages: { key: string; content: React.ReactNode }[] = [];
+  invoices.forEach((inv) => {
+    if (mode === "invoice") {
+      pages.push({ key: `${inv.id}-inv`, content: renderInvoiceDoc(inv) });
+    } else if (mode === "receipt") {
+      pages.push({ key: `${inv.id}-rcp`, content: renderReceiptDoc(inv) });
+    } else {
+      pages.push({
+        key: `${inv.id}-both`,
+        content: (
+          <>
+            {renderInvoiceDoc(inv)}
+            <div className="mt-8 pt-6 border-t-2 border-dashed border-gray-400 relative">
+              <p className="absolute -top-2 left-1/2 -translate-x-1/2 bg-white px-3 text-xs text-gray-400 tracking-widest">
+                ✂ ---- 切り取り線 ----
+              </p>
+              {renderReceiptDoc(inv)}
+            </div>
+          </>
+        ),
+      });
+    }
+  });
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b sticky top-0 z-10 print:hidden">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-2">
+          <button onClick={onBack} className="text-sm text-gray-600 hover:text-gray-800">
+            &larr; 一覧へ戻る
+          </button>
+          <h2 className="text-sm font-bold text-gray-800">
+            {modeLabel}を一括印刷（{invoices.length}件）
+          </h2>
+          <button
+            onClick={handlePrint}
+            className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+          >
+            印刷
+          </button>
+        </div>
+      </header>
+
+      <div className="max-w-4xl mx-auto px-4 py-6 print:px-0 print:py-0 print:max-w-none">
+        {invoices.length === 0 ? (
+          <p className="text-center text-sm text-gray-500 py-16">印刷する請求書がありません</p>
+        ) : (
+          pages.map((page, idx) => (
+            <div
+              key={page.key}
+              className="bg-white rounded-xl shadow-sm border p-8 print:shadow-none print:border-none print:rounded-none print:p-12 mb-4 print:mb-0"
+              style={{
+                fontFamily: "'Noto Sans JP', sans-serif",
+                pageBreakAfter: idx < pages.length - 1 ? "always" : "auto",
+                breakAfter: idx < pages.length - 1 ? "page" : "auto",
+              }}
+            >
+              {page.content}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
