@@ -11,7 +11,7 @@ import {
 } from "@/lib/types";
 import {
   signIn,
-  signUp,
+  resetPassword,
   signOut,
   getUser,
   onAuthChange,
@@ -587,7 +587,7 @@ export default function InvoiceApp() {
 function LoginView() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [mode, setMode] = useState<"login" | "reset">("login");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -598,9 +598,9 @@ function LoginView() {
     setMessage("");
     setLoading(true);
     try {
-      if (isSignUp) {
-        await signUp(email, password);
-        setMessage("確認メールを送信しました。メールのリンクをクリックして登録を完了してください。");
+      if (mode === "reset") {
+        await resetPassword(email);
+        setMessage("パスワード再設定用のメールを送信しました。メール内のリンクから新しいパスワードを設定してください。");
       } else {
         await signIn(email, password);
       }
@@ -621,7 +621,7 @@ function LoginView() {
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-xl border p-6 space-y-4">
           <h2 className="text-lg font-bold text-gray-800 text-center">
-            {isSignUp ? "新規登録" : "ログイン"}
+            {mode === "reset" ? "パスワード再発行" : "ログイン"}
           </h2>
           {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
           {message && <p className="text-sm text-green-600 bg-green-50 rounded-lg p-3">{message}</p>}
@@ -638,46 +638,38 @@ function LoginView() {
               placeholder="mail@example.com"
             />
           </div>
-          <div>
-            <label htmlFor="login-password" className="text-xs text-gray-500">パスワード</label>
-            <input
-              id="login-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={6}
-              aria-label="パスワード"
-              className="w-full px-3 py-2 border rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
-              placeholder="6文字以上"
-            />
-          </div>
+          {mode === "login" && (
+            <div>
+              <label htmlFor="login-password" className="text-xs text-gray-500">パスワード</label>
+              <input
+                id="login-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={6}
+                aria-label="パスワード"
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
+                placeholder="6文字以上"
+              />
+            </div>
+          )}
           <button
             type="submit"
             disabled={loading}
             className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50"
           >
-            {loading ? "処理中..." : isSignUp ? "登録する" : "ログイン"}
+            {loading ? "処理中..." : mode === "reset" ? "再設定メールを送信" : "ログイン"}
           </button>
           <p className="text-center text-xs text-gray-500">
-            {isSignUp ? "既にアカウントをお持ちの方は" : "アカウントをお持ちでない方は"}
             <button
               type="button"
-              onClick={() => { setIsSignUp(!isSignUp); setError(""); setMessage(""); }}
-              className="text-blue-600 hover:underline ml-1"
+              onClick={() => { setMode(mode === "reset" ? "login" : "reset"); setError(""); setMessage(""); }}
+              className="text-blue-600 hover:underline"
             >
-              {isSignUp ? "ログイン" : "新規登録"}
+              {mode === "reset" ? "ログインに戻る" : "パスワードを忘れた方はこちら"}
             </button>
           </p>
-          {isSignUp && (
-            <p className="text-center text-xs text-gray-400">
-              登録することで
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline mx-1">利用規約</a>
-              および
-              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline mx-1">プライバシーポリシー</a>
-              に同意したものとみなします。
-            </p>
-          )}
         </form>
         <div className="mt-4 flex justify-center gap-4 text-xs text-gray-400">
           <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:underline">利用規約</a>
