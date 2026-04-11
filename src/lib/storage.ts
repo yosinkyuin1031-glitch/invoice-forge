@@ -66,6 +66,7 @@ export async function getInvoices(): Promise<Invoice[]> {
     clinicLogo: inv.clinic_logo,
     clinicStamp: inv.clinic_stamp,
     clientId: inv.client_id || undefined,
+    clientType: (inv.client_type === "individual" ? "individual" : "company") as "company" | "individual",
     clientName: inv.client_name,
     clientZip: inv.client_zip,
     clientAddress: inv.client_address,
@@ -102,6 +103,7 @@ export async function saveInvoice(invoice: Invoice, userId: string): Promise<Inv
         due_date: invoice.dueDate,
         status: invoice.status,
         client_id: invoice.clientId || null,
+        client_type: invoice.clientType || "company",
         client_name: invoice.clientName,
         client_zip: invoice.clientZip,
         client_address: invoice.clientAddress,
@@ -148,6 +150,7 @@ export async function saveInvoice(invoice: Invoice, userId: string): Promise<Inv
         due_date: invoice.dueDate,
         status: invoice.status,
         client_id: invoice.clientId || null,
+        client_type: invoice.clientType || "company",
         client_name: invoice.clientName,
         client_zip: invoice.clientZip,
         client_address: invoice.clientAddress,
@@ -295,6 +298,7 @@ export async function getClients(): Promise<Client[]> {
   if (error) throw error;
   return (data || []).map((c) => ({
     id: c.id,
+    clientType: (c.client_type === "individual" ? "individual" : "company") as "company" | "individual",
     companyName: c.company_name,
     contactName: c.contact_name,
     zip: c.zip,
@@ -313,6 +317,7 @@ export async function saveClient(client: Partial<Client> & { companyName: string
     const { data, error } = await supabase
       .from("inv_clients")
       .update({
+        client_type: client.clientType || "company",
         company_name: client.companyName,
         contact_name: client.contactName || "",
         zip: client.zip || "",
@@ -332,6 +337,7 @@ export async function saveClient(client: Partial<Client> & { companyName: string
       .from("inv_clients")
       .insert({
         user_id: userId,
+        client_type: client.clientType || "company",
         company_name: client.companyName,
         contact_name: client.contactName || "",
         zip: client.zip || "",
@@ -357,6 +363,7 @@ export async function deleteClient(id: string) {
 function mapClient(c: Record<string, unknown>): Client {
   return {
     id: c.id as string,
+    clientType: (c.client_type === "individual" ? "individual" : "company") as "company" | "individual",
     companyName: c.company_name as string,
     contactName: c.contact_name as string,
     zip: c.zip as string,

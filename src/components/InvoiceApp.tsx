@@ -144,6 +144,7 @@ export default function InvoiceApp() {
       clinicEmail: profile.clinicEmail,
       clinicLogo: profile.clinicLogo,
       clinicStamp: profile.clinicStamp,
+      clientType: "company",
       clientName: "",
       clientZip: "",
       clientAddress: "",
@@ -261,6 +262,7 @@ export default function InvoiceApp() {
         clinicEmail: profile.clinicEmail,
         clinicLogo: profile.clinicLogo,
         clinicStamp: profile.clinicStamp,
+        clientType: "company",
         clientName: order.customerName,
         clientZip: "",
         clientAddress: order.shippingAddress,
@@ -1034,6 +1036,7 @@ function InvoiceEditor({
     onUpdate({
       ...invoice,
       clientId: c.id,
+      clientType: c.clientType || "company",
       clientName: c.companyName,
       clientZip: c.zip,
       clientAddress: c.address,
@@ -1190,20 +1193,46 @@ function InvoiceEditor({
                   </button>
                 ) : (
                   <div className="space-y-2 mt-2 p-2 bg-white rounded-lg border">
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setNewClient({ ...newClient, clientType: "company" })}
+                        className={`flex-1 py-1 text-xs rounded border ${
+                          (newClient.clientType || "company") === "company"
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-600 border-gray-300"
+                        }`}
+                      >
+                        会社
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewClient({ ...newClient, clientType: "individual" })}
+                        className={`flex-1 py-1 text-xs rounded border ${
+                          newClient.clientType === "individual"
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-600 border-gray-300"
+                        }`}
+                      >
+                        個人
+                      </button>
+                    </div>
                     <input
                       type="text"
-                      placeholder="会社名/院名"
+                      placeholder={newClient.clientType === "individual" ? "氏名" : "会社名/院名"}
                       value={newClient.companyName || ""}
                       onChange={(e) => setNewClient({ ...newClient, companyName: e.target.value })}
                       className="w-full px-2 py-1.5 border rounded text-xs"
                     />
-                    <input
-                      type="text"
-                      placeholder="担当者名"
-                      value={newClient.contactName || ""}
-                      onChange={(e) => setNewClient({ ...newClient, contactName: e.target.value })}
-                      className="w-full px-2 py-1.5 border rounded text-xs"
-                    />
+                    {newClient.clientType !== "individual" && (
+                      <input
+                        type="text"
+                        placeholder="担当者名"
+                        value={newClient.contactName || ""}
+                        onChange={(e) => setNewClient({ ...newClient, contactName: e.target.value })}
+                        className="w-full px-2 py-1.5 border rounded text-xs"
+                      />
+                    )}
                     <input
                       type="email"
                       placeholder="メール"
@@ -1232,15 +1261,44 @@ function InvoiceEditor({
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500">会社名/院名 <span className="text-red-500">*</span></label>
+                <label className="text-xs text-gray-500 block mb-1">区分</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateField("clientType", "company")}
+                    className={`flex-1 py-1.5 text-xs rounded-lg border transition ${
+                      invoice.clientType === "company"
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    会社（御中）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateField("clientType", "individual")}
+                    className={`flex-1 py-1.5 text-xs rounded-lg border transition ${
+                      invoice.clientType === "individual"
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    個人（様）
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">
+                  {invoice.clientType === "individual" ? "氏名" : "会社名/院名"} <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={invoice.clientName}
                   onChange={(e) => updateField("clientName", e.target.value)}
-                  placeholder="例: 株式会社ABC"
+                  placeholder={invoice.clientType === "individual" ? "例: 山田 太郎" : "例: 株式会社ABC"}
                   required
                   aria-required="true"
-                  aria-label="取引先の会社名/院名"
+                  aria-label={invoice.clientType === "individual" ? "取引先の氏名" : "取引先の会社名/院名"}
                   className={`w-full px-3 py-2 border rounded-lg text-sm mt-1 ${
                     invoice.clientName.trim() === "" ? "border-red-300 focus:ring-red-300 focus:border-red-400" : ""
                   }`}
@@ -1627,7 +1685,7 @@ function InvoicePreview({
     let msg = `【請求書】${invoice.invoiceNumber}\n`;
     msg += `発行日: ${invoice.issueDate}\n`;
     msg += `支払期限: ${invoice.dueDate}\n\n`;
-    msg += `${invoice.clientName} 御中\n\n`;
+    msg += `${invoice.clientName} ${invoice.clientType === "individual" ? "様" : "御中"}\n\n`;
     msg += `下記の通りご請求申し上げます。\n\n`;
     msg += `--- 明細 ---\n${items}\n\n`;
     if (!taxExempt) {
@@ -1736,7 +1794,7 @@ function InvoicePreview({
             <div>
               <p className="text-xs text-gray-400 mb-1">請求先</p>
               <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
-                <p className="text-lg font-bold">{invoice.clientName || "（取引先名未入力）"} 御中</p>
+                <p className="text-lg font-bold">{invoice.clientName || "（取引先名未入力）"} {invoice.clientType === "individual" ? "様" : "御中"}</p>
               </div>
               {invoice.clientZip && <p className="text-xs text-gray-500">{invoice.clientZip}</p>}
               {invoice.clientAddress && <p className="text-xs text-gray-500">{invoice.clientAddress}</p>}
@@ -1867,7 +1925,7 @@ function InvoicePreview({
                 <div>
                   <p className="text-xs text-gray-400 mb-1">宛名</p>
                   <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
-                    <p className="text-lg font-bold">{invoice.clientName || "（取引先名未入力）"} 様</p>
+                    <p className="text-lg font-bold">{invoice.clientName || "（取引先名未入力）"} {invoice.clientType === "individual" ? "様" : "御中"}</p>
                   </div>
                   <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
                     <p className="text-sm text-gray-600">領収金額</p>
@@ -1989,7 +2047,7 @@ function ClientsView({
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold text-gray-800">取引先管理</h2>
         <button
-          onClick={() => setEditing({ companyName: "", contactName: "", zip: "", address: "", phone: "", email: "", memo: "" })}
+          onClick={() => setEditing({ clientType: "company", companyName: "", contactName: "", zip: "", address: "", phone: "", email: "", memo: "" })}
           className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
         >
           + 新規取引先
@@ -2012,33 +2070,65 @@ function ClientsView({
           <h3 className="text-sm font-bold text-gray-700 mb-3">
             {editing.id ? "取引先編集" : "新規取引先"}
           </h3>
+          <div className="mb-3">
+            <label className="text-xs text-gray-500 block mb-1">区分</label>
+            <div className="flex gap-2 max-w-xs">
+              <button
+                type="button"
+                onClick={() => setEditing({ ...editing, clientType: "company" })}
+                className={`flex-1 py-1.5 text-xs rounded-lg border transition ${
+                  (editing.clientType || "company") === "company"
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                会社（御中）
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing({ ...editing, clientType: "individual" })}
+                className={`flex-1 py-1.5 text-xs rounded-lg border transition ${
+                  editing.clientType === "individual"
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                個人（様）
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-500">会社名/院名 <span className="text-red-500">*</span></label>
+              <label className="text-xs text-gray-500">
+                {editing.clientType === "individual" ? "氏名" : "会社名/院名"} <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={editing.companyName || ""}
                 onChange={(e) => setEditing({ ...editing, companyName: e.target.value })}
                 required
                 aria-required="true"
-                aria-label="取引先の会社名/院名"
+                aria-label={editing.clientType === "individual" ? "取引先の氏名" : "取引先の会社名/院名"}
+                placeholder={editing.clientType === "individual" ? "例: 山田 太郎" : "例: 株式会社ABC"}
                 className={`w-full px-3 py-2 border rounded-lg text-sm mt-1 ${
                   (editing.companyName || "").trim() === "" ? "border-red-300" : ""
                 }`}
               />
               {(editing.companyName || "").trim() === "" && (
-                <p className="text-xs text-red-500 mt-1" role="alert">会社名/院名は必須です</p>
+                <p className="text-xs text-red-500 mt-1" role="alert">取引先名は必須です</p>
               )}
             </div>
-            <div>
-              <label className="text-xs text-gray-500">担当者名</label>
-              <input
-                type="text"
-                value={editing.contactName || ""}
-                onChange={(e) => setEditing({ ...editing, contactName: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
+            {editing.clientType !== "individual" && (
+              <div>
+                <label className="text-xs text-gray-500">担当者名</label>
+                <input
+                  type="text"
+                  value={editing.contactName || ""}
+                  onChange={(e) => setEditing({ ...editing, contactName: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+            )}
             <div>
               <label className="text-xs text-gray-500">郵便番号</label>
               <input
@@ -2160,8 +2250,17 @@ function ClientsView({
             <div key={c.id} className="bg-white rounded-xl border p-4 hover:shadow-sm transition">
               <div className="flex items-start justify-between">
                 <div className="cursor-pointer" onClick={() => setSelectedClient(c)}>
-                  <p className="font-medium text-gray-800">{c.companyName}</p>
-                  {c.contactName && <p className="text-xs text-gray-500">{c.contactName}</p>}
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                      c.clientType === "individual"
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-blue-100 text-blue-700"
+                    }`}>
+                      {c.clientType === "individual" ? "個人" : "会社"}
+                    </span>
+                    <p className="font-medium text-gray-800">{c.companyName}</p>
+                  </div>
+                  {c.contactName && c.clientType !== "individual" && <p className="text-xs text-gray-500">{c.contactName}</p>}
                   {c.phone && <p className="text-xs text-gray-400">{c.phone}</p>}
                   {c.email && <p className="text-xs text-gray-400">{c.email}</p>}
                 </div>

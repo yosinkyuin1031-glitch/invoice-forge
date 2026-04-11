@@ -22,6 +22,7 @@ export interface Invoice {
   clinicStamp: string; // base64 印影
   // 宛先情報
   clientId?: string;
+  clientType: "company" | "individual"; // 会社/個人
   clientName: string;
   clientZip: string;
   clientAddress: string;
@@ -38,8 +39,9 @@ export interface Invoice {
 
 export interface Client {
   id: string;
-  companyName: string;
-  contactName: string;
+  clientType: "company" | "individual";
+  companyName: string; // 会社の場合は会社名/院名、個人の場合は氏名
+  contactName: string; // 会社の場合の担当者名（個人なら空）
   zip: string;
   address: string;
   phone: string;
