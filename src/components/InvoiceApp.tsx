@@ -130,6 +130,7 @@ export default function InvoiceApp() {
     const profile = profiles.find((p) => p.isDefault) || profiles[0];
     const now = new Date();
     const invoiceNumber = await generateInvoiceNumber(profile.id);
+    const defaultTaxRate = profile.taxMode === "exempt" ? 0 : 0.1;
     const invoice: Invoice = {
       id: `inv-${Date.now()}`,
       profileId: profile.id,
@@ -147,7 +148,7 @@ export default function InvoiceApp() {
       clientZip: "",
       clientAddress: "",
       clientEmail: "",
-      items: [{ id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: 0.1 }],
+      items: [{ id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: defaultTaxRate }],
       notes: profile.bankInfo ? `振込先:\n${profile.bankInfo}` : "",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -246,6 +247,7 @@ export default function InvoiceApp() {
       const profile = profiles.find((p) => p.isDefault) || profiles[0];
       const now = new Date();
       const invoiceNumber = await generateInvoiceNumber(profile.id);
+      const defaultTaxRate = profile.taxMode === "exempt" ? 0 : 0.1;
       const invoice: Invoice = {
         id: `inv-${Date.now()}`,
         profileId: profile.id,
@@ -268,7 +270,7 @@ export default function InvoiceApp() {
           name: item.product_name,
           quantity: item.quantity,
           unitPrice: item.unit_price,
-          taxRate: 0.1,
+          taxRate: defaultTaxRate,
         })),
         notes: `EC注文: ${order.id}`,
         createdAt: now.toISOString(),
@@ -394,11 +396,11 @@ export default function InvoiceApp() {
       <>
         <InvoicePreview
           invoice={currentInvoice}
+          profile={profiles.find((p) => p.id === currentInvoice.profileId) || defaultProfile}
           calcSubtotal={calcSubtotal}
           calcTax={calcTax}
           calcTotal={calcTotal}
           formatCurrency={formatCurrency}
-          bankInfo={(profiles.find((p) => p.id === currentInvoice.profileId) || defaultProfile).bankInfo}
           onBack={() => { setView("list"); setCurrentInvoice(null); }}
           onEdit={() => handleEditInvoice(currentInvoice)}
           onStatusChange={async (status) => {
@@ -939,6 +941,9 @@ function InvoiceEditor({
   showSuccess: (msg: string) => void;
   showError: (msg: string) => void;
 }) {
+  const currentProfile = profiles.find((p) => p.id === invoice.profileId);
+  const taxExempt = currentProfile?.taxMode === "exempt";
+
   const switchProfile = (profileId: string) => {
     const p = profiles.find((x) => x.id === profileId);
     if (!p) return;
@@ -950,6 +955,10 @@ function InvoiceEditor({
     } else if (p.bankInfo && !newNotes.includes(p.bankInfo)) {
       newNotes = newNotes ? `${newNotes}\n\n振込先:\n${p.bankInfo}` : `振込先:\n${p.bankInfo}`;
     }
+    // 非課税に切り替えた場合、全ての明細の税率を0にする
+    const newItems = p.taxMode === "exempt"
+      ? invoice.items.map((i) => ({ ...i, taxRate: 0 }))
+      : invoice.items;
     onUpdate({
       ...invoice,
       profileId: p.id,
@@ -961,6 +970,7 @@ function InvoiceEditor({
       clinicLogo: p.clinicLogo,
       clinicStamp: p.clinicStamp,
       notes: newNotes,
+      items: newItems,
     });
   };
   const [showProducts, setShowProducts] = useState(false);
@@ -983,7 +993,7 @@ function InvoiceEditor({
   const addItem = () => {
     onUpdate({
       ...invoice,
-      items: [...invoice.items, { id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: 0.1 }],
+      items: [...invoice.items, { id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: taxExempt ? 0 : 0.1 }],
     });
   };
 
@@ -1000,7 +1010,7 @@ function InvoiceEditor({
         name: p.name,
         quantity: 1,
         unitPrice: p.unitPrice,
-        taxRate: p.taxRate,
+        taxRate: taxExempt ? 0 : p.taxRate,
       }],
     });
     setShowProducts(false);
@@ -1014,7 +1024,7 @@ function InvoiceEditor({
         name: m.name,
         quantity: 1,
         unitPrice: m.price,
-        taxRate: 0.1,
+        taxRate: taxExempt ? 0 : 0.1,
       }],
     });
     setShowMenuItems(false);
@@ -1434,7 +1444,7 @@ function InvoiceEditor({
                     item.name.trim() === "" ? "border-red-300" : ""
                   }`}
                 />
-                <div className="grid grid-cols-3 gap-2">
+                <div className={`grid gap-2 ${taxExempt ? "grid-cols-2" : "grid-cols-3"}`}>
                   <div>
                     <label className="text-xs text-gray-400">数量</label>
                     <input
@@ -1460,18 +1470,20 @@ function InvoiceEditor({
                       <p className="text-xs text-red-500 mt-0.5">1円以上</p>
                     )}
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-400">税率</label>
-                    <select
-                      value={item.taxRate}
-                      onChange={(e) => updateItem(item.id, "taxRate", parseFloat(e.target.value))}
-                      className="w-full px-3 py-2 border rounded-lg text-sm mt-0.5 bg-white"
-                    >
-                      <option value={0.1}>10%</option>
-                      <option value={0.08}>8%</option>
-                      <option value={0}>0%</option>
-                    </select>
-                  </div>
+                  {!taxExempt && (
+                    <div>
+                      <label className="text-xs text-gray-400">税率</label>
+                      <select
+                        value={item.taxRate}
+                        onChange={(e) => updateItem(item.id, "taxRate", parseFloat(e.target.value))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm mt-0.5 bg-white"
+                      >
+                        <option value={0.1}>10%</option>
+                        <option value={0.08}>8%</option>
+                        <option value={0}>0%</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <p className="text-right text-sm font-medium text-gray-700 mt-1">
                   {formatCurrency(item.quantity * item.unitPrice)}
@@ -1482,16 +1494,20 @@ function InvoiceEditor({
 
           {/* Totals */}
           <div className="mt-4 pt-3 border-t space-y-1">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">小計</span>
-              <span>{formatCurrency(calcSubtotal(invoice.items))}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">消費税</span>
-              <span>{formatCurrency(calcTax(invoice.items))}</span>
-            </div>
+            {!taxExempt && (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">小計</span>
+                  <span>{formatCurrency(calcSubtotal(invoice.items))}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">消費税</span>
+                  <span>{formatCurrency(calcTax(invoice.items))}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between text-lg font-bold">
-              <span>合計</span>
+              <span>合計{taxExempt ? "（非課税）" : ""}</span>
               <span className="text-blue-600">{formatCurrency(calcTotal(invoice.items))}</span>
             </div>
           </div>
@@ -1524,25 +1540,28 @@ function InvoiceEditor({
 // ===== INVOICE PREVIEW / PDF COMPONENT =====
 function InvoicePreview({
   invoice,
+  profile,
   calcSubtotal,
   calcTax,
   calcTotal,
   formatCurrency,
-  bankInfo,
   onBack,
   onEdit,
   onStatusChange,
 }: {
   invoice: Invoice;
+  profile: BusinessProfile;
   calcSubtotal: (items: InvoiceItem[]) => number;
   calcTax: (items: InvoiceItem[]) => number;
   calcTotal: (items: InvoiceItem[]) => number;
   formatCurrency: (n: number) => string;
-  bankInfo: string;
   onBack: () => void;
   onEdit: () => void;
   onStatusChange: (status: Invoice["status"]) => void;
 }) {
+  const bankInfo = profile.bankInfo;
+  const taxExempt = profile.taxMode === "exempt";
+  const showReceipt = profile.showReceipt;
   const printRef = useRef<HTMLDivElement>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
 
@@ -1611,9 +1630,11 @@ function InvoicePreview({
     msg += `${invoice.clientName} 御中\n\n`;
     msg += `下記の通りご請求申し上げます。\n\n`;
     msg += `--- 明細 ---\n${items}\n\n`;
-    msg += `小計: ¥${subtotal.toLocaleString()}\n`;
-    msg += `消費税: ¥${tax.toLocaleString()}\n`;
-    msg += `合計: ¥${total.toLocaleString()}\n`;
+    if (!taxExempt) {
+      msg += `小計: ¥${subtotal.toLocaleString()}\n`;
+      msg += `消費税: ¥${tax.toLocaleString()}\n`;
+    }
+    msg += `合計${taxExempt ? "（非課税）" : ""}: ¥${total.toLocaleString()}\n`;
     if (bankInfo) {
       msg += `\n--- 振込先 ---\n${bankInfo}\n`;
     }
@@ -1776,7 +1797,7 @@ function InvoicePreview({
                 <th className="py-2 px-3 text-left font-medium">項目</th>
                 <th className="py-2 px-3 text-center font-medium w-16">数量</th>
                 <th className="py-2 px-3 text-right font-medium w-24">単価</th>
-                <th className="py-2 px-3 text-center font-medium w-16">税率</th>
+                {!taxExempt && <th className="py-2 px-3 text-center font-medium w-16">税率</th>}
                 <th className="py-2 px-3 text-right font-medium w-28">金額</th>
               </tr>
             </thead>
@@ -1786,7 +1807,7 @@ function InvoicePreview({
                   <td className="py-2 px-3">{item.name || "（未入力）"}</td>
                   <td className="py-2 px-3 text-center">{item.quantity}</td>
                   <td className="py-2 px-3 text-right">{formatCurrency(item.unitPrice)}</td>
-                  <td className="py-2 px-3 text-center">{Math.round(item.taxRate * 100)}%</td>
+                  {!taxExempt && <td className="py-2 px-3 text-center">{Math.round(item.taxRate * 100)}%</td>}
                   <td className="py-2 px-3 text-right font-medium">
                     {formatCurrency(item.quantity * item.unitPrice)}
                   </td>
@@ -1798,16 +1819,20 @@ function InvoicePreview({
           {/* Totals */}
           <div className="flex justify-end mb-8">
             <div className="w-64">
-              <div className="flex justify-between py-1 text-sm">
-                <span className="text-gray-500">小計</span>
-                <span>{formatCurrency(calcSubtotal(invoice.items))}</span>
-              </div>
-              <div className="flex justify-between py-1 text-sm">
-                <span className="text-gray-500">消費税</span>
-                <span>{formatCurrency(calcTax(invoice.items))}</span>
-              </div>
+              {!taxExempt && (
+                <>
+                  <div className="flex justify-between py-1 text-sm">
+                    <span className="text-gray-500">小計</span>
+                    <span>{formatCurrency(calcSubtotal(invoice.items))}</span>
+                  </div>
+                  <div className="flex justify-between py-1 text-sm">
+                    <span className="text-gray-500">消費税</span>
+                    <span>{formatCurrency(calcTax(invoice.items))}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-gray-800 mt-1">
-                <span>合計</span>
+                <span>合計{taxExempt ? "（非課税）" : ""}</span>
                 <span>{formatCurrency(calcTotal(invoice.items))}</span>
               </div>
             </div>
@@ -1826,6 +1851,61 @@ function InvoicePreview({
             <div className="mb-6">
               <p className="text-xs font-bold text-gray-600 mb-1">備考</p>
               <p className="text-sm text-gray-600 whitespace-pre-line">{invoice.notes}</p>
+            </div>
+          )}
+
+          {/* Receipt（同一用紙に領収書） */}
+          {showReceipt && (
+            <div className="mt-8 pt-6 border-t-2 border-dashed border-gray-400 relative">
+              <p className="absolute -top-2 left-1/2 -translate-x-1/2 bg-white px-3 text-xs text-gray-400 tracking-widest">
+                ✂ ---- 切り取り線 ----
+              </p>
+              <div className="text-center mb-6">
+                <h2 className="text-xl font-bold text-gray-800 tracking-widest">領 収 書</h2>
+              </div>
+              <div className="grid grid-cols-2 gap-8 mb-6">
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">宛名</p>
+                  <div className="border-b-2 border-gray-800 pb-1 mb-2 inline-block">
+                    <p className="text-lg font-bold">{invoice.clientName || "（取引先名未入力）"} 様</p>
+                  </div>
+                  <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
+                    <p className="text-sm text-gray-600">領収金額</p>
+                    <p className="text-2xl font-bold text-blue-700">
+                      {formatCurrency(calcTotal(invoice.items))}
+                    </p>
+                    {taxExempt && <p className="text-xs text-gray-500 mt-1">（非課税）</p>}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-400 mb-1">発行元</p>
+                  <p className="font-bold text-sm">{invoice.clinicName}</p>
+                  {invoice.clinicZip && <p className="text-xs text-gray-500">{invoice.clinicZip}</p>}
+                  {invoice.clinicAddress && <p className="text-xs text-gray-500">{invoice.clinicAddress}</p>}
+                  {invoice.clinicPhone && <p className="text-xs text-gray-500">{invoice.clinicPhone}</p>}
+                  {invoice.clinicStamp && (
+                    <img
+                      src={invoice.clinicStamp}
+                      alt="印影"
+                      className="w-16 h-16 object-contain ml-auto mt-2 opacity-80"
+                    />
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-8 text-sm">
+                <div>
+                  <span className="text-gray-500">発行日: </span>
+                  <span className="font-medium">{invoice.issueDate}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">番号: </span>
+                  <span className="font-medium">{invoice.invoiceNumber}</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-4">
+                上記の通り正に領収いたしました。
+              </p>
+              <p className="text-xs text-gray-400 mt-1">但し: {invoice.items.map(i => i.name).filter(Boolean).join("、") || "ご利用料金として"}</p>
             </div>
           )}
         </div>
@@ -2940,6 +3020,34 @@ function SettingsView({
                 />
               </div>
             </div>
+            <div className="mt-3">
+              <label className="text-xs text-gray-500">消費税の扱い</label>
+              <select
+                value={draft.taxMode}
+                onChange={(e) => setDraft({ ...draft, taxMode: e.target.value as "standard" | "exempt" })}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 bg-white"
+              >
+                <option value="standard">課税（通常：税額を計算して表示）</option>
+                <option value="exempt">非課税（訪問鍼灸など：税額表示なし）</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                非課税を選ぶと明細の税率欄と合計の消費税行が非表示になります
+              </p>
+            </div>
+            <label className="flex items-start gap-2 mt-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={draft.showReceipt}
+                onChange={(e) => setDraft({ ...draft, showReceipt: e.target.checked })}
+                className="mt-0.5"
+              />
+              <span>
+                請求書と領収書を1枚にまとめて印刷する
+                <span className="block text-xs text-gray-400">
+                  印刷/PDF出力時に上半分が請求書、下半分が領収書（切り取り線つき）になります
+                </span>
+              </span>
+            </label>
             <div className="mt-3">
               <label className="text-xs text-gray-500">振込先情報</label>
               <textarea

@@ -75,6 +75,8 @@ export interface BusinessProfile {
   bankInfo: string;
   isDefault: boolean;
   sortOrder: number;
+  taxMode: "standard" | "exempt"; // standard=課税, exempt=非課税（訪問鍼灸など）
+  showReceipt: boolean; // 請求書と領収書を1枚にまとめて印刷
 }
 
 export const DEFAULT_PROFILE: Omit<BusinessProfile, "id"> = {
@@ -91,6 +93,8 @@ export const DEFAULT_PROFILE: Omit<BusinessProfile, "id"> = {
   bankInfo: "",
   isDefault: false,
   sortOrder: 0,
+  taxMode: "standard",
+  showReceipt: false,
 };
 
 // Legacy alias for backwards compatibility

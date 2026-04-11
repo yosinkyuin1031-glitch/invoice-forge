@@ -207,6 +207,8 @@ function mapProfile(d: Record<string, unknown>): BusinessProfile {
     bankInfo: (d.bank_info as string) || "",
     isDefault: (d.is_default as boolean) || false,
     sortOrder: (d.sort_order as number) || 0,
+    taxMode: ((d.tax_mode as string) === "exempt" ? "exempt" : "standard"),
+    showReceipt: (d.show_receipt as boolean) || false,
   };
 }
 
@@ -235,6 +237,8 @@ export async function saveProfile(profile: BusinessProfile, userId: string): Pro
     bank_info: profile.bankInfo,
     is_default: profile.isDefault,
     sort_order: profile.sortOrder,
+    tax_mode: profile.taxMode || "standard",
+    show_receipt: !!profile.showReceipt,
     updated_at: new Date().toISOString(),
   };
   if (profile.id) {
