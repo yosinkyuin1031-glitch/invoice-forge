@@ -301,7 +301,7 @@ export default function InvoiceApp() {
   const calcTax = (items: InvoiceItem[]) =>
     items.reduce((sum, i) => sum + Math.floor(i.quantity * i.unitPrice * i.taxRate), 0);
   const calcTotal = (items: InvoiceItem[]) => calcSubtotal(items) + calcTax(items);
-  const formatCurrency = (n: number) => `¥${n.toLocaleString()}`;
+  const formatCurrency = (n: number) => `${n.toLocaleString()}円`;
 
   // Auth loading
   if (authLoading) {
@@ -1618,7 +1618,7 @@ function InvoicePreview({
 
   const buildMessageText = () => {
     const items = invoice.items
-      .map((item) => `・${item.name}　${item.quantity}点 × ¥${item.unitPrice.toLocaleString()} = ¥${(item.quantity * item.unitPrice).toLocaleString()}`)
+      .map((item) => `・${item.name}　${item.quantity}点 × ${item.unitPrice.toLocaleString()}円 = ${(item.quantity * item.unitPrice).toLocaleString()}円`)
       .join("\n");
     const total = calcTotal(invoice.items);
     const subtotal = calcSubtotal(invoice.items);
@@ -1631,10 +1631,10 @@ function InvoicePreview({
     msg += `下記の通りご請求申し上げます。\n\n`;
     msg += `--- 明細 ---\n${items}\n\n`;
     if (!taxExempt) {
-      msg += `小計: ¥${subtotal.toLocaleString()}\n`;
-      msg += `消費税: ¥${tax.toLocaleString()}\n`;
+      msg += `小計: ${subtotal.toLocaleString()}円\n`;
+      msg += `消費税: ${tax.toLocaleString()}円\n`;
     }
-    msg += `合計${taxExempt ? "（非課税）" : ""}: ¥${total.toLocaleString()}\n`;
+    msg += `合計${taxExempt ? "（非課税）" : ""}: ${total.toLocaleString()}円\n`;
     if (bankInfo) {
       msg += `\n--- 振込先 ---\n${bankInfo}\n`;
     }
