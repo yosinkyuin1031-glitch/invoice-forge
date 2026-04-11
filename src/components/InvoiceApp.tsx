@@ -1115,6 +1115,28 @@ function InvoiceEditor({
           </div>
         </div>
 
+        {/* 事業プロファイル選択 */}
+        {profiles.length > 0 && (
+          <div className="bg-white rounded-xl border-2 border-blue-300 p-4">
+            <h3 className="text-sm font-bold text-gray-700 mb-2">事業プロファイル（発行元を選択）</h3>
+            <select
+              value={invoice.profileId || ""}
+              onChange={(e) => switchProfile(e.target.value)}
+              className="w-full px-3 py-2 border rounded-lg text-sm bg-white font-medium"
+            >
+              {!invoice.profileId && <option value="">選択してください</option>}
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.profileName}{p.isDefault ? "（既定）" : ""}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-blue-600 mt-2">
+              切り替えると、下の「発行元」欄・振込先・請求書番号の採番が選択した事業に差し替わります
+            </p>
+          </div>
+        )}
+
         {/* Client & Clinic Info - 2 column */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Client Info (請求先) */}
@@ -1252,25 +1274,10 @@ function InvoiceEditor({
 
           {/* Clinic Info (発行元) */}
           <div className="bg-white rounded-xl border p-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-3">発行元</h3>
-            {profiles.length > 0 && (
-              <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                <label className="text-xs text-blue-700 font-medium">事業プロファイル（どの事業で発行するか）</label>
-                <select
-                  value={invoice.profileId || ""}
-                  onChange={(e) => switchProfile(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1 bg-white"
-                >
-                  {!invoice.profileId && <option value="">選択してください</option>}
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.profileName}{p.isDefault ? "（既定）" : ""}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-blue-600 mt-1">切り替えると発行元情報・振込先が選択した事業に差し替わります</p>
-              </div>
-            )}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-700">発行元</h3>
+              <span className="text-xs text-gray-400">プロファイル選択で自動入力</span>
+            </div>
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-500">会社名/院名</label>
