@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { Invoice, InvoiceItem, ClinicSettings, Client, Product, DEFAULT_SETTINGS } from "./types";
+import { Invoice, InvoiceItem, BusinessProfile, ClinicSettings, Client, Product, DEFAULT_SETTINGS, DEFAULT_PROFILE } from "./types";
 
 // ===== AUTH =====
 export async function signIn(email: string, password: string) {
@@ -54,6 +54,7 @@ export async function getInvoices(): Promise<Invoice[]> {
 
   return invoices.map((inv) => ({
     id: inv.id,
+    profileId: inv.profile_id || undefined,
     invoiceNumber: inv.invoice_number,
     issueDate: inv.issue_date,
     dueDate: inv.due_date,
@@ -95,6 +96,7 @@ export async function saveInvoice(invoice: Invoice, userId: string): Promise<Inv
       .from("inv_invoices")
       .insert({
         user_id: userId,
+        profile_id: invoice.profileId || null,
         invoice_number: invoice.invoiceNumber,
         issue_date: invoice.issueDate,
         due_date: invoice.dueDate,
@@ -140,6 +142,7 @@ export async function saveInvoice(invoice: Invoice, userId: string): Promise<Inv
     const { error } = await supabase
       .from("inv_invoices")
       .update({
+        profile_id: invoice.profileId || null,
         invoice_number: invoice.invoiceNumber,
         issue_date: invoice.issueDate,
         due_date: invoice.dueDate,
@@ -187,55 +190,96 @@ export async function deleteInvoice(id: string) {
   if (error) throw error;
 }
 
-// ===== SETTINGS =====
-export async function getSettings(userId: string): Promise<ClinicSettings> {
-  const { data, error } = await supabase
-    .from("inv_settings")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-  if (error || !data) return { ...DEFAULT_SETTINGS };
+// ===== BUSINESS PROFILES (複数事業対応) =====
+function mapProfile(d: Record<string, unknown>): BusinessProfile {
   return {
-    clinicName: data.clinic_name,
-    clinicZip: data.clinic_zip,
-    clinicAddress: data.clinic_address,
-    clinicPhone: data.clinic_phone,
-    clinicEmail: data.clinic_email,
-    clinicLogo: data.clinic_logo,
-    clinicStamp: data.clinic_stamp,
-    nextInvoiceNumber: data.next_invoice_number,
-    invoicePrefix: data.invoice_prefix,
-    bankInfo: data.bank_info,
+    id: d.id as string,
+    profileName: (d.profile_name as string) || "",
+    clinicName: (d.clinic_name as string) || "",
+    clinicZip: (d.clinic_zip as string) || "",
+    clinicAddress: (d.clinic_address as string) || "",
+    clinicPhone: (d.clinic_phone as string) || "",
+    clinicEmail: (d.clinic_email as string) || "",
+    clinicLogo: (d.clinic_logo as string) || "",
+    clinicStamp: (d.clinic_stamp as string) || "",
+    nextInvoiceNumber: (d.next_invoice_number as number) || 1,
+    invoicePrefix: (d.invoice_prefix as string) || "INV-",
+    bankInfo: (d.bank_info as string) || "",
+    isDefault: (d.is_default as boolean) || false,
+    sortOrder: (d.sort_order as number) || 0,
   };
 }
 
-export async function saveSettings(settings: ClinicSettings, userId: string) {
-  const { error } = await supabase
+export async function getProfiles(): Promise<BusinessProfile[]> {
+  const { data, error } = await supabase
     .from("inv_settings")
-    .upsert({
-      user_id: userId,
-      clinic_name: settings.clinicName,
-      clinic_zip: settings.clinicZip,
-      clinic_address: settings.clinicAddress,
-      clinic_phone: settings.clinicPhone,
-      clinic_email: settings.clinicEmail,
-      clinic_logo: settings.clinicLogo,
-      clinic_stamp: settings.clinicStamp,
-      next_invoice_number: settings.nextInvoiceNumber,
-      invoice_prefix: settings.invoicePrefix,
-      bank_info: settings.bankInfo,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" });
+    .select("*")
+    .order("sort_order", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapProfile);
+}
+
+export async function saveProfile(profile: BusinessProfile, userId: string): Promise<BusinessProfile> {
+  const payload = {
+    user_id: userId,
+    profile_name: profile.profileName || "デフォルト",
+    clinic_name: profile.clinicName,
+    clinic_zip: profile.clinicZip,
+    clinic_address: profile.clinicAddress,
+    clinic_phone: profile.clinicPhone,
+    clinic_email: profile.clinicEmail,
+    clinic_logo: profile.clinicLogo,
+    clinic_stamp: profile.clinicStamp,
+    next_invoice_number: profile.nextInvoiceNumber,
+    invoice_prefix: profile.invoicePrefix,
+    bank_info: profile.bankInfo,
+    is_default: profile.isDefault,
+    sort_order: profile.sortOrder,
+    updated_at: new Date().toISOString(),
+  };
+  if (profile.id) {
+    const { data, error } = await supabase.from("inv_settings").update(payload).eq("id", profile.id).select().single();
+    if (error) throw error;
+    return mapProfile(data);
+  } else {
+    const { data, error } = await supabase.from("inv_settings").insert(payload).select().single();
+    if (error) throw error;
+    return mapProfile(data);
+  }
+}
+
+export async function deleteProfile(id: string) {
+  const { error } = await supabase.from("inv_settings").delete().eq("id", id);
   if (error) throw error;
 }
 
-export async function generateInvoiceNumber(userId: string): Promise<string> {
-  const settings = await getSettings(userId);
-  const num = settings.nextInvoiceNumber;
+export async function setDefaultProfile(id: string, userId: string) {
+  // まず全部false
+  await supabase.from("inv_settings").update({ is_default: false }).eq("user_id", userId);
+  // 対象だけtrue
+  const { error } = await supabase.from("inv_settings").update({ is_default: true }).eq("id", id);
+  if (error) throw error;
+}
+
+// ===== SETTINGS (Legacy backwards-compatible wrappers) =====
+export async function getSettings(_userId: string): Promise<ClinicSettings> {
+  const profiles = await getProfiles();
+  const def = profiles.find((p) => p.isDefault) || profiles[0];
+  return def || ({ ...DEFAULT_SETTINGS } as ClinicSettings);
+}
+
+export async function saveSettings(settings: ClinicSettings, userId: string) {
+  await saveProfile(settings as BusinessProfile, userId);
+}
+
+export async function generateInvoiceNumber(profileId: string): Promise<string> {
+  const { data, error } = await supabase.from("inv_settings").select("*").eq("id", profileId).single();
+  if (error || !data) throw error || new Error("profile not found");
+  const num = data.next_invoice_number as number;
   const padded = String(num).padStart(4, "0");
-  settings.nextInvoiceNumber = num + 1;
-  await saveSettings(settings, userId);
-  return `${settings.invoicePrefix}${padded}`;
+  const prefix = (data.invoice_prefix as string) || "INV-";
+  await supabase.from("inv_settings").update({ next_invoice_number: num + 1, updated_at: new Date().toISOString() }).eq("id", profileId);
+  return `${prefix}${padded}`;
 }
 
 // ===== CLIENTS =====

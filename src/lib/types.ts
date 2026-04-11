@@ -8,10 +8,11 @@ export interface InvoiceItem {
 
 export interface Invoice {
   id: string;
+  profileId?: string; // どの事業プロファイルで発行したか
   invoiceNumber: string;
   issueDate: string;
   dueDate: string;
-  // 発行元情報
+  // 発行元情報（プロファイルからコピーされたスナップショット）
   clinicName: string;
   clinicZip: string;
   clinicAddress: string;
@@ -59,7 +60,9 @@ export interface Product {
   updatedAt: string;
 }
 
-export interface ClinicSettings {
+export interface BusinessProfile {
+  id: string;
+  profileName: string; // 事業名（表示用・選択用）
   clinicName: string;
   clinicZip: string;
   clinicAddress: string;
@@ -70,9 +73,12 @@ export interface ClinicSettings {
   nextInvoiceNumber: number;
   invoicePrefix: string;
   bankInfo: string;
+  isDefault: boolean;
+  sortOrder: number;
 }
 
-export const DEFAULT_SETTINGS: ClinicSettings = {
+export const DEFAULT_PROFILE: Omit<BusinessProfile, "id"> = {
+  profileName: "新しい事業",
   clinicName: "",
   clinicZip: "",
   clinicAddress: "",
@@ -83,7 +89,13 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
   nextInvoiceNumber: 1,
   invoicePrefix: "INV-",
   bankInfo: "",
+  isDefault: false,
+  sortOrder: 0,
 };
+
+// Legacy alias for backwards compatibility
+export type ClinicSettings = BusinessProfile;
+export const DEFAULT_SETTINGS = { ...DEFAULT_PROFILE, id: "" } as BusinessProfile;
 
 // Legacy type kept for compatibility
 export interface MenuTemplate {

@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Invoice,
   InvoiceItem,
-  ClinicSettings,
+  BusinessProfile,
   Client,
   Product,
-  DEFAULT_SETTINGS,
+  DEFAULT_PROFILE,
 } from "@/lib/types";
 import {
   signIn,
@@ -18,8 +18,10 @@ import {
   getInvoices as fetchInvoices,
   saveInvoice as persistInvoice,
   deleteInvoice as removeInvoice,
-  getSettings as fetchSettings,
-  saveSettings as persistSettings,
+  getProfiles as fetchProfiles,
+  saveProfile as persistProfile,
+  deleteProfile as removeProfile,
+  setDefaultProfile,
   generateInvoiceNumber,
   getClients as fetchClients,
   saveClient as persistClient,
@@ -43,7 +45,7 @@ export default function InvoiceApp() {
   const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState<View>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [settings, setSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
+  const [profiles, setProfiles] = useState<BusinessProfile[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [ecOrders, setEcOrders] = useState<EcOrder[]>([]);
@@ -78,14 +80,14 @@ export default function InvoiceApp() {
     }
     Promise.all([
       fetchInvoices(),
-      fetchSettings(user.id),
+      fetchProfiles(),
       fetchClients(),
       fetchProducts(),
       fetchEcOrders().catch(() => [] as EcOrder[]),
       fetchMenuItems().catch(() => [] as MenuMenuItem[]),
-    ]).then(([invs, sets, cls, prds, eos, mis]) => {
+    ]).then(([invs, profs, cls, prds, eos, mis]) => {
       setInvoices(invs);
-      setSettings(sets);
+      setProfiles(profs);
       setClients(cls);
       setProducts(prds);
       setEcOrders(eos);
@@ -114,36 +116,46 @@ export default function InvoiceApp() {
     setMenuItems(mis);
   }, [user]);
 
+  // デフォルト事業プロファイル取得
+  const defaultProfile = profiles.find((p) => p.isDefault) || profiles[0] || ({ ...DEFAULT_PROFILE, id: "" } as BusinessProfile);
+
   // Create new invoice
   const handleNewInvoice = useCallback(async () => {
     if (!user) return;
+    if (profiles.length === 0) {
+      showError("事業プロファイルが未登録です。設定から追加してください");
+      setView("settings");
+      return;
+    }
+    const profile = profiles.find((p) => p.isDefault) || profiles[0];
     const now = new Date();
-    const invoiceNumber = await generateInvoiceNumber(user.id);
+    const invoiceNumber = await generateInvoiceNumber(profile.id);
     const invoice: Invoice = {
       id: `inv-${Date.now()}`,
+      profileId: profile.id,
       invoiceNumber,
       issueDate: now.toISOString().split("T")[0],
       dueDate: new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0],
-      clinicName: settings.clinicName,
-      clinicZip: settings.clinicZip,
-      clinicAddress: settings.clinicAddress,
-      clinicPhone: settings.clinicPhone,
-      clinicEmail: settings.clinicEmail,
-      clinicLogo: settings.clinicLogo,
-      clinicStamp: settings.clinicStamp,
+      clinicName: profile.clinicName,
+      clinicZip: profile.clinicZip,
+      clinicAddress: profile.clinicAddress,
+      clinicPhone: profile.clinicPhone,
+      clinicEmail: profile.clinicEmail,
+      clinicLogo: profile.clinicLogo,
+      clinicStamp: profile.clinicStamp,
       clientName: "",
       clientZip: "",
       clientAddress: "",
       clientEmail: "",
       items: [{ id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: 0.1 }],
-      notes: "",
+      notes: profile.bankInfo ? `振込先:\n${profile.bankInfo}` : "",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
       status: "draft",
     };
     setCurrentInvoice(invoice);
     setView("create");
-  }, [user, settings]);
+  }, [user, profiles, showError]);
 
   const handleEditInvoice = useCallback((inv: Invoice) => {
     setCurrentInvoice({ ...inv, items: inv.items.map((i) => ({ ...i })) });
@@ -204,7 +216,9 @@ export default function InvoiceApp() {
   const handleDuplicateInvoice = useCallback(async (inv: Invoice) => {
     if (!user) return;
     try {
-      const invoiceNumber = await generateInvoiceNumber(user.id);
+      const profileId = inv.profileId || defaultProfile.id;
+      if (!profileId) { showError("事業プロファイルが見つかりません"); return; }
+      const invoiceNumber = await generateInvoiceNumber(profileId);
       const newInv: Invoice = {
         ...inv,
         id: `inv-${Date.now()}`,
@@ -222,26 +236,29 @@ export default function InvoiceApp() {
     } catch {
       showError("複製に失敗しました");
     }
-  }, [user, reloadData, showSuccess, showError]);
+  }, [user, defaultProfile, reloadData, showSuccess, showError]);
 
   // Create invoice from EC order
   const handleCreateInvoiceFromEc = useCallback(async (order: EcOrder) => {
     if (!user) return;
+    if (profiles.length === 0) { showError("事業プロファイルが未登録です"); return; }
     try {
+      const profile = profiles.find((p) => p.isDefault) || profiles[0];
       const now = new Date();
-      const invoiceNumber = await generateInvoiceNumber(user.id);
+      const invoiceNumber = await generateInvoiceNumber(profile.id);
       const invoice: Invoice = {
         id: `inv-${Date.now()}`,
+        profileId: profile.id,
         invoiceNumber,
         issueDate: now.toISOString().split("T")[0],
         dueDate: new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0],
-        clinicName: settings.clinicName,
-        clinicZip: settings.clinicZip,
-        clinicAddress: settings.clinicAddress,
-        clinicPhone: settings.clinicPhone,
-        clinicEmail: settings.clinicEmail,
-        clinicLogo: settings.clinicLogo,
-        clinicStamp: settings.clinicStamp,
+        clinicName: profile.clinicName,
+        clinicZip: profile.clinicZip,
+        clinicAddress: profile.clinicAddress,
+        clinicPhone: profile.clinicPhone,
+        clinicEmail: profile.clinicEmail,
+        clinicLogo: profile.clinicLogo,
+        clinicStamp: profile.clinicStamp,
         clientName: order.customerName,
         clientZip: "",
         clientAddress: order.shippingAddress,
@@ -263,7 +280,7 @@ export default function InvoiceApp() {
     } catch {
       showError("請求書の作成に失敗しました");
     }
-  }, [user, settings, showError]);
+  }, [user, profiles, showError]);
 
   // Filter invoices
   const filteredInvoices = invoices.filter((inv) => {
@@ -351,6 +368,7 @@ export default function InvoiceApp() {
       <>
         <InvoiceEditor
           invoice={currentInvoice}
+          profiles={profiles}
           clients={clients}
           products={products}
           menuItems={menuItems}
@@ -380,7 +398,7 @@ export default function InvoiceApp() {
           calcTax={calcTax}
           calcTotal={calcTotal}
           formatCurrency={formatCurrency}
-          bankInfo={settings.bankInfo}
+          bankInfo={(profiles.find((p) => p.id === currentInvoice.profileId) || defaultProfile).bankInfo}
           onBack={() => { setView("list"); setCurrentInvoice(null); }}
           onEdit={() => handleEditInvoice(currentInvoice)}
           onStatusChange={async (status) => {
@@ -523,16 +541,44 @@ export default function InvoiceApp() {
 
         {view === "settings" && (
           <SettingsView
-            settings={settings}
+            profiles={profiles}
             userId={user.id}
-            onSaveSettings={async (s) => {
+            onReload={async () => {
+              const p = await fetchProfiles();
+              setProfiles(p);
+            }}
+            onSaveProfile={async (p) => {
               if (!user) return;
               try {
-                await persistSettings(s, user.id);
-                setSettings(s);
-                showSuccess("設定を保存しました");
+                await persistProfile(p, user.id);
+                const updated = await fetchProfiles();
+                setProfiles(updated);
+                showSuccess("事業プロファイルを保存しました");
               } catch {
-                showError("設定の保存に失敗しました");
+                showError("保存に失敗しました");
+              }
+            }}
+            onDeleteProfile={async (id) => {
+              const ok = await confirm({ title: "事業を削除", message: "この事業プロファイルを削除しますか？", confirmLabel: "削除する" });
+              if (!ok) return;
+              try {
+                await removeProfile(id);
+                const updated = await fetchProfiles();
+                setProfiles(updated);
+                showSuccess("事業を削除しました");
+              } catch {
+                showError("削除に失敗しました");
+              }
+            }}
+            onSetDefault={async (id) => {
+              if (!user) return;
+              try {
+                await setDefaultProfile(id, user.id);
+                const updated = await fetchProfiles();
+                setProfiles(updated);
+                showSuccess("デフォルト事業を変更しました");
+              } catch {
+                showError("変更に失敗しました");
               }
             }}
             onBack={() => setView("list")}
@@ -569,7 +615,6 @@ export default function InvoiceApp() {
           <EcOrdersView
             ecOrders={ecOrders}
             invoices={invoices}
-            settings={settings}
             formatCurrency={formatCurrency}
             onCreateInvoice={handleCreateInvoiceFromEc}
           />
@@ -861,6 +906,7 @@ function InvoiceListView({
 // ===== INVOICE EDITOR COMPONENT =====
 function InvoiceEditor({
   invoice,
+  profiles,
   clients,
   products,
   menuItems,
@@ -877,6 +923,7 @@ function InvoiceEditor({
   showError,
 }: {
   invoice: Invoice;
+  profiles: BusinessProfile[];
   clients: Client[];
   products: Product[];
   menuItems?: MenuMenuItem[];
@@ -892,6 +939,30 @@ function InvoiceEditor({
   showSuccess: (msg: string) => void;
   showError: (msg: string) => void;
 }) {
+  const switchProfile = (profileId: string) => {
+    const p = profiles.find((x) => x.id === profileId);
+    if (!p) return;
+    // 既存の備考から旧振込先ブロックを置換
+    let newNotes = invoice.notes || "";
+    const bankBlockRe = /振込先:\n[\s\S]*?(?=\n\n|$)/;
+    if (bankBlockRe.test(newNotes)) {
+      newNotes = p.bankInfo ? newNotes.replace(bankBlockRe, `振込先:\n${p.bankInfo}`) : newNotes.replace(bankBlockRe, "").trim();
+    } else if (p.bankInfo && !newNotes.includes(p.bankInfo)) {
+      newNotes = newNotes ? `${newNotes}\n\n振込先:\n${p.bankInfo}` : `振込先:\n${p.bankInfo}`;
+    }
+    onUpdate({
+      ...invoice,
+      profileId: p.id,
+      clinicName: p.clinicName,
+      clinicZip: p.clinicZip,
+      clinicAddress: p.clinicAddress,
+      clinicPhone: p.clinicPhone,
+      clinicEmail: p.clinicEmail,
+      clinicLogo: p.clinicLogo,
+      clinicStamp: p.clinicStamp,
+      notes: newNotes,
+    });
+  };
   const [showProducts, setShowProducts] = useState(false);
   const [showMenuItems, setShowMenuItems] = useState(false);
   const [showClientPicker, setShowClientPicker] = useState(false);
@@ -1182,6 +1253,24 @@ function InvoiceEditor({
           {/* Clinic Info (発行元) */}
           <div className="bg-white rounded-xl border p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3">発行元</h3>
+            {profiles.length > 0 && (
+              <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <label className="text-xs text-blue-700 font-medium">事業プロファイル（どの事業で発行するか）</label>
+                <select
+                  value={invoice.profileId || ""}
+                  onChange={(e) => switchProfile(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1 bg-white"
+                >
+                  {!invoice.profileId && <option value="">選択してください</option>}
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.profileName}{p.isDefault ? "（既定）" : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-blue-600 mt-1">切り替えると発行元情報・振込先が選択した事業に差し替わります</p>
+              </div>
+            )}
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-500">会社名/院名</label>
@@ -2504,28 +2593,58 @@ function AnalyticsView({
 
 // ===== SETTINGS VIEW =====
 function SettingsView({
-  settings,
-  userId,
-  onSaveSettings,
-  onBack,
+  profiles,
+  onSaveProfile,
+  onDeleteProfile,
+  onSetDefault,
 }: {
-  settings: ClinicSettings;
+  profiles: BusinessProfile[];
   userId: string;
-  onSaveSettings: (s: ClinicSettings) => void;
+  onReload: () => Promise<void>;
+  onSaveProfile: (p: BusinessProfile) => Promise<void>;
+  onDeleteProfile: (id: string) => Promise<void>;
+  onSetDefault: (id: string) => Promise<void>;
   onBack: () => void;
 }) {
-  const [localSettings, setLocalSettings] = useState<ClinicSettings>({ ...settings });
-  const [saved, setSaved] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<BusinessProfile | null>(null);
+  const [imageError, setImageError] = useState("");
   const logoInputRef = useRef<HTMLInputElement>(null);
   const stampInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSave = () => {
-    onSaveSettings(localSettings);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const startEdit = (p: BusinessProfile) => {
+    setEditingId(p.id);
+    setDraft({ ...p });
+    setImageError("");
   };
 
-  const [imageError, setImageError] = useState("");
+  const startCreate = () => {
+    setEditingId("new");
+    setDraft({
+      ...DEFAULT_PROFILE,
+      id: "",
+      profileName: "",
+      sortOrder: profiles.length,
+    } as BusinessProfile);
+    setImageError("");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft(null);
+    setImageError("");
+  };
+
+  const handleSaveDraft = async () => {
+    if (!draft) return;
+    if (!draft.profileName.trim()) {
+      setImageError("事業名を入力してください");
+      return;
+    }
+    await onSaveProfile(draft);
+    setEditingId(null);
+    setDraft(null);
+  };
 
   const handleImageUpload = (field: "clinicLogo" | "clinicStamp", file: File) => {
     setImageError("");
@@ -2534,14 +2653,14 @@ function SettingsView({
       setImageError("JPGまたはPNG形式のみアップロードできます");
       return;
     }
-    const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+    const MAX_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       setImageError("ファイルサイズは2MB以下にしてください");
       return;
     }
     const reader = new FileReader();
     reader.onload = (e) => {
-      setLocalSettings((prev) => ({ ...prev, [field]: e.target?.result as string }));
+      setDraft((prev) => prev ? { ...prev, [field]: e.target?.result as string } : prev);
     };
     reader.readAsDataURL(file);
   };
@@ -2549,185 +2668,291 @@ function SettingsView({
   return (
     <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-gray-800">設定</h2>
-        <button
-          onClick={handleSave}
-          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-        >
-          {saved ? "保存済み" : "保存"}
-        </button>
-      </div>
-
-      {/* Company Info */}
-      <div className="bg-white rounded-xl border p-4">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">会社・院情報</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-gray-500">会社名/院名</label>
-            <input
-              type="text"
-              value={localSettings.clinicName}
-              onChange={(e) => setLocalSettings((p) => ({ ...p, clinicName: e.target.value }))}
-              placeholder="例: 大口神経整体院"
-              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="text-xs text-gray-500">郵便番号</label>
-              <input
-                type="text"
-                value={localSettings.clinicZip}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicZip: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-gray-500">住所</label>
-              <input
-                type="text"
-                value={localSettings.clinicAddress}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicAddress: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-500">電話番号</label>
-              <input
-                type="tel"
-                value={localSettings.clinicPhone}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicPhone: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">メール</label>
-              <input
-                type="email"
-                value={localSettings.clinicEmail}
-                onChange={(e) => setLocalSettings((p) => ({ ...p, clinicEmail: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Logo & Stamp */}
-      <div className="bg-white rounded-xl border p-4">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">ロゴ・印影</h3>
-        {imageError && (
-          <p className="text-sm text-red-600 bg-red-50 rounded-lg p-2 mb-3" role="alert">{imageError}</p>
+        <h2 className="text-lg font-bold text-gray-800">事業プロファイル設定</h2>
+        {editingId === null && (
+          <button
+            onClick={startCreate}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+          >
+            + 事業を追加
+          </button>
         )}
-        <p className="text-xs text-gray-400 mb-3">JPG/PNG形式、2MB以下</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-gray-500 block mb-2">ロゴ画像</label>
-            {localSettings.clinicLogo ? (
-              <div className="relative inline-block">
-                <img src={localSettings.clinicLogo} alt="Logo" className="w-24 h-24 object-contain border rounded-lg" />
-                <button
-                  onClick={() => setLocalSettings((p) => ({ ...p, clinicLogo: "" }))}
-                  aria-label="ロゴ画像を削除"
-                  className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
-                >
-                  x
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => logoInputRef.current?.click()}
-                aria-label="ロゴ画像をアップロード"
-                className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
-              >
-                +
-              </button>
-            )}
-            <input
-              ref={logoInputRef}
-              type="file"
-              accept="image/jpeg,image/png"
-              className="hidden"
-              onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicLogo", e.target.files[0]); }}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500 block mb-2">印影画像</label>
-            {localSettings.clinicStamp ? (
-              <div className="relative inline-block">
-                <img src={localSettings.clinicStamp} alt="Stamp" className="w-24 h-24 object-contain border rounded-lg" />
-                <button
-                  onClick={() => setLocalSettings((p) => ({ ...p, clinicStamp: "" }))}
-                  aria-label="印影画像を削除"
-                  className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
-                >
-                  x
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => stampInputRef.current?.click()}
-                aria-label="印影画像をアップロード"
-                className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
-              >
-                +
-              </button>
-            )}
-            <input
-              ref={stampInputRef}
-              type="file"
-              accept="image/jpeg,image/png"
-              className="hidden"
-              onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicStamp", e.target.files[0]); }}
-            />
-          </div>
-        </div>
       </div>
 
-      {/* Invoice Settings */}
-      <div className="bg-white rounded-xl border p-4">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">請求書設定</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-gray-500">番号プレフィックス</label>
-            <input
-              type="text"
-              value={localSettings.invoicePrefix}
-              onChange={(e) => setLocalSettings((p) => ({ ...p, invoicePrefix: e.target.value }))}
-              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500">次の番号</label>
-            <input
-              type="number"
-              min={1}
-              value={localSettings.nextInvoiceNumber}
-              onChange={(e) => setLocalSettings((p) => ({ ...p, nextInvoiceNumber: parseInt(e.target.value) || 1 }))}
-              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
-            />
-          </div>
-        </div>
-        <div className="mt-3">
-          <label className="text-xs text-gray-500">振込先情報</label>
-          <textarea
-            value={localSettings.bankInfo}
-            onChange={(e) => setLocalSettings((p) => ({ ...p, bankInfo: e.target.value }))}
-            placeholder="例: 三菱UFJ銀行 渋谷支店 普通 1234567 カ）オオクチシンケイセイタイイン"
-            rows={3}
-            className="w-full px-3 py-2 border rounded-lg text-sm mt-1 resize-none"
-          />
-        </div>
-      </div>
+      <p className="text-xs text-gray-500">
+        複数の事業を登録して、請求書作成時に選択できます。デフォルト事業は新規作成時に自動で選ばれます。
+      </p>
 
-      <button
-        onClick={handleSave}
-        className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition"
-      >
-        {saved ? "保存しました" : "設定を保存"}
-      </button>
+      {/* List profiles */}
+      {editingId === null && (
+        <div className="space-y-3">
+          {profiles.length === 0 && (
+            <div className="bg-white rounded-xl border p-6 text-center text-sm text-gray-500">
+              事業プロファイルが未登録です。<br />「+ 事業を追加」から最初の事業を登録してください。
+            </div>
+          )}
+          {profiles.map((p) => (
+            <div key={p.id} className="bg-white rounded-xl border p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base font-bold text-gray-800 truncate">{p.profileName || "(名称未設定)"}</h3>
+                    {p.isDefault && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">デフォルト</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1 truncate">{p.clinicName}</p>
+                  <p className="text-xs text-gray-400 mt-0.5 truncate">{p.clinicAddress}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">請求書番号: {p.invoicePrefix}{String(p.nextInvoiceNumber).padStart(4, "0")} (次番)</p>
+                </div>
+                <div className="flex flex-col gap-1 shrink-0">
+                  <button
+                    onClick={() => startEdit(p)}
+                    className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                  >
+                    編集
+                  </button>
+                  {!p.isDefault && (
+                    <button
+                      onClick={() => onSetDefault(p.id)}
+                      className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
+                    >
+                      既定にする
+                    </button>
+                  )}
+                  {profiles.length > 1 && (
+                    <button
+                      onClick={() => onDeleteProfile(p.id)}
+                      className="px-3 py-1 text-xs text-red-500 hover:text-red-700"
+                    >
+                      削除
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Edit form */}
+      {editingId !== null && draft && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-gray-800">
+              {editingId === "new" ? "事業を追加" : "事業を編集"}
+            </h3>
+            <div className="flex gap-2">
+              <button
+                onClick={cancelEdit}
+                className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleSaveDraft}
+                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+
+          {imageError && (
+            <p className="text-sm text-red-600 bg-red-50 rounded-lg p-2" role="alert">{imageError}</p>
+          )}
+
+          {/* Profile name */}
+          <div className="bg-white rounded-xl border p-4">
+            <h4 className="text-sm font-bold text-gray-700 mb-3">事業プロファイル</h4>
+            <div>
+              <label className="text-xs text-gray-500">事業名（内部識別用）<span className="text-red-500">*</span></label>
+              <input
+                type="text"
+                value={draft.profileName}
+                onChange={(e) => setDraft({ ...draft, profileName: e.target.value })}
+                placeholder="例: 大口神経整体院 / 晴陽鍼灸院"
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              />
+            </div>
+            <label className="flex items-center gap-2 mt-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={draft.isDefault}
+                onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })}
+              />
+              この事業をデフォルトにする
+            </label>
+          </div>
+
+          {/* Company Info */}
+          <div className="bg-white rounded-xl border p-4">
+            <h4 className="text-sm font-bold text-gray-700 mb-3">会社・院情報</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500">会社名/院名</label>
+                <input
+                  type="text"
+                  value={draft.clinicName}
+                  onChange={(e) => setDraft({ ...draft, clinicName: e.target.value })}
+                  placeholder="例: 大口神経整体院"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500">郵便番号</label>
+                  <input
+                    type="text"
+                    value={draft.clinicZip}
+                    onChange={(e) => setDraft({ ...draft, clinicZip: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-gray-500">住所</label>
+                  <input
+                    type="text"
+                    value={draft.clinicAddress}
+                    onChange={(e) => setDraft({ ...draft, clinicAddress: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500">電話番号</label>
+                  <input
+                    type="tel"
+                    value={draft.clinicPhone}
+                    onChange={(e) => setDraft({ ...draft, clinicPhone: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">メール</label>
+                  <input
+                    type="email"
+                    value={draft.clinicEmail}
+                    onChange={(e) => setDraft({ ...draft, clinicEmail: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Logo & Stamp */}
+          <div className="bg-white rounded-xl border p-4">
+            <h4 className="text-sm font-bold text-gray-700 mb-3">ロゴ・印影</h4>
+            <p className="text-xs text-gray-400 mb-3">JPG/PNG形式、2MB以下</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-gray-500 block mb-2">ロゴ画像</label>
+                {draft.clinicLogo ? (
+                  <div className="relative inline-block">
+                    <img src={draft.clinicLogo} alt="Logo" className="w-24 h-24 object-contain border rounded-lg" />
+                    <button
+                      onClick={() => setDraft({ ...draft, clinicLogo: "" })}
+                      aria-label="ロゴ画像を削除"
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
+                    >
+                      x
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => logoInputRef.current?.click()}
+                    className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
+                  >
+                    +
+                  </button>
+                )}
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicLogo", e.target.files[0]); }}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 block mb-2">印影画像</label>
+                {draft.clinicStamp ? (
+                  <div className="relative inline-block">
+                    <img src={draft.clinicStamp} alt="Stamp" className="w-24 h-24 object-contain border rounded-lg" />
+                    <button
+                      onClick={() => setDraft({ ...draft, clinicStamp: "" })}
+                      aria-label="印影画像を削除"
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
+                    >
+                      x
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => stampInputRef.current?.click()}
+                    className="w-24 h-24 border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-400 transition"
+                  >
+                    +
+                  </button>
+                )}
+                <input
+                  ref={stampInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files?.[0]) handleImageUpload("clinicStamp", e.target.files[0]); }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Invoice Settings */}
+          <div className="bg-white rounded-xl border p-4">
+            <h4 className="text-sm font-bold text-gray-700 mb-3">請求書設定</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-500">番号プレフィックス</label>
+                <input
+                  type="text"
+                  value={draft.invoicePrefix}
+                  onChange={(e) => setDraft({ ...draft, invoicePrefix: e.target.value })}
+                  placeholder="例: INV- / HARE-"
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">次の番号</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.nextInvoiceNumber}
+                  onChange={(e) => setDraft({ ...draft, nextInvoiceNumber: parseInt(e.target.value) || 1 })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+                />
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="text-xs text-gray-500">振込先情報</label>
+              <textarea
+                value={draft.bankInfo}
+                onChange={(e) => setDraft({ ...draft, bankInfo: e.target.value })}
+                placeholder="例: 三菱UFJ銀行 渋谷支店 普通 1234567 カ）オオクチシンケイセイタイイン"
+                rows={3}
+                className="w-full px-3 py-2 border rounded-lg text-sm mt-1 resize-none"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleSaveDraft}
+            className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition"
+          >
+            保存する
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2736,13 +2961,11 @@ function SettingsView({
 function EcOrdersView({
   ecOrders,
   invoices,
-  settings: _settings,
   formatCurrency,
   onCreateInvoice,
 }: {
   ecOrders: EcOrder[];
   invoices: Invoice[];
-  settings: ClinicSettings;
   formatCurrency: (n: number) => string;
   onCreateInvoice: (order: EcOrder) => void;
 }) {
