@@ -7,10 +7,95 @@ body {
 }
 
 @media print {
-  body {
-    background: white !important;
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
   }
+
+  html, body {
+    background: white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   .print\:hidden {
     display: none !important;
+  }
+
+  /* ---- Invoice document compact print layout ---- */
+  .invoice-doc {
+    /* 1ページに収まるように余白・フォントを圧縮 */
+    padding: 6mm 8mm !important;
+    font-size: 10.5px !important;
+    line-height: 1.35 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .invoice-doc h1 {
+    font-size: 18px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .invoice-doc h2 {
+    font-size: 14px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .invoice-doc .text-2xl {
+    font-size: 16px !important;
+  }
+  .invoice-doc .text-xl {
+    font-size: 14px !important;
+  }
+  .invoice-doc .text-lg {
+    font-size: 12px !important;
+  }
+  .invoice-doc .text-sm {
+    font-size: 10px !important;
+  }
+  .invoice-doc .text-xs {
+    font-size: 9px !important;
+  }
+
+  /* 各ブロック間の余白を詰める */
+  .invoice-doc .mb-8 { margin-bottom: 8px !important; }
+  .invoice-doc .mb-6 { margin-bottom: 6px !important; }
+  .invoice-doc .mb-4 { margin-bottom: 4px !important; }
+  .invoice-doc .mb-3 { margin-bottom: 3px !important; }
+  .invoice-doc .mt-8 { margin-top: 8px !important; }
+  .invoice-doc .mt-4 { margin-top: 3px !important; }
+  .invoice-doc .pt-6 { padding-top: 4px !important; }
+  .invoice-doc .py-2 { padding-top: 2px !important; padding-bottom: 2px !important; }
+  .invoice-doc .py-1 { padding-top: 1px !important; padding-bottom: 1px !important; }
+  .invoice-doc .p-4 { padding: 6px !important; }
+  .invoice-doc .p-8 { padding: 8px !important; }
+  .invoice-doc .gap-8 { gap: 12px !important; }
+
+  /* テーブルもコンパクト */
+  .invoice-doc table { font-size: 10px !important; }
+  .invoice-doc table th,
+  .invoice-doc table td {
+    padding: 3px 6px !important;
+  }
+
+  /* ロゴ・印影を小さく */
+  .invoice-doc img {
+    max-width: 50px !important;
+    max-height: 50px !important;
+  }
+
+  /* 請求+領収セクションのページ内フィット */
+  .invoice-doc .border-t-2.border-dashed {
+    margin-top: 6px !important;
+    padding-top: 6px !important;
+  }
+
+  /* 一括印刷時の余白を消してページごとにちょうど1枚に */
+  .bulk-print-page {
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
   }
 }

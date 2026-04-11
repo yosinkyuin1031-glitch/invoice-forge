@@ -1888,7 +1888,7 @@ function InvoicePreview({
       <div className="max-w-4xl mx-auto px-4 py-6 print:px-0 print:py-0 print:max-w-none">
         <div
           ref={printRef}
-          className="bg-white rounded-xl shadow-sm border p-8 print:shadow-none print:border-none print:rounded-none print:p-12"
+          className="invoice-doc bg-white rounded-xl shadow-sm border p-8 print:shadow-none print:border-none print:rounded-none"
           style={{ fontFamily: "'Noto Sans JP', sans-serif" }}
         >
           {/* Header */}
@@ -2294,7 +2294,7 @@ function BulkPrintView({
           pages.map((page, idx) => (
             <div
               key={page.key}
-              className="bg-white rounded-xl shadow-sm border p-8 print:shadow-none print:border-none print:rounded-none print:p-12 mb-4 print:mb-0"
+              className="invoice-doc bulk-print-page bg-white rounded-xl shadow-sm border p-8 print:shadow-none print:border-none print:rounded-none mb-4 print:mb-0"
               style={{
                 fontFamily: "'Noto Sans JP', sans-serif",
                 pageBreakAfter: idx < pages.length - 1 ? "always" : "auto",
