@@ -40,6 +40,9 @@ import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 type View = "list" | "create" | "edit" | "preview" | "settings" | "clients" | "products" | "analytics" | "ec-orders" | "bulk-print";
 type BulkPrintMode = "invoice" | "receipt" | "both";
 
+// 備考から旧来の「振込先:」ブロックを除去（振込先は専用欄で表示するため重複を防ぐ）
+const stripBankFromNotes = (notes: string) => (notes || "").replace(/振込先:\n[\s\S]*?(?=\n\n|$)/g, "").trim();
+
 // ===== MAIN APP =====
 export default function InvoiceApp() {
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
@@ -153,7 +156,7 @@ export default function InvoiceApp() {
       clientAddress: "",
       clientEmail: "",
       items: [{ id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: defaultTaxRate }],
-      notes: profile.bankInfo ? `振込先:\n${profile.bankInfo}` : "",
+      notes: "",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
       status: "draft",
@@ -219,6 +222,18 @@ export default function InvoiceApp() {
       showError("保存に失敗しました。もう一度お試しください");
     }
   }, [currentInvoice, user, reloadData, showSuccess, showError]);
+
+  const handleMarkPaid = useCallback(async (inv: Invoice) => {
+    if (!user) return;
+    try {
+      const updated: Invoice = { ...inv, status: "paid", updatedAt: new Date().toISOString() };
+      await persistInvoice(updated, user.id);
+      await reloadData();
+      showSuccess("入金済に変更しました");
+    } catch {
+      showError("ステータスの変更に失敗しました");
+    }
+  }, [user, reloadData, showSuccess, showError]);
 
   const handleDeleteInvoice = useCallback(async (id: string) => {
     const ok = await confirm({
@@ -549,6 +564,7 @@ export default function InvoiceApp() {
             handleEditInvoice={handleEditInvoice}
             handleDuplicateInvoice={handleDuplicateInvoice}
             handleDeleteInvoice={handleDeleteInvoice}
+            handleMarkPaid={handleMarkPaid}
             calcTotal={calcTotal}
             formatCurrency={formatCurrency}
             selectedIds={selectedIds}
@@ -781,6 +797,7 @@ function InvoiceListView({
   handleEditInvoice,
   handleDuplicateInvoice,
   handleDeleteInvoice,
+  handleMarkPaid,
   calcTotal,
   formatCurrency,
   selectedIds,
@@ -800,6 +817,7 @@ function InvoiceListView({
   handleEditInvoice: (inv: Invoice) => void;
   handleDuplicateInvoice: (inv: Invoice) => void;
   handleDeleteInvoice: (id: string) => void;
+  handleMarkPaid: (inv: Invoice) => void;
   calcTotal: (items: InvoiceItem[]) => number;
   formatCurrency: (n: number) => string;
   selectedIds: Set<string>;
@@ -992,6 +1010,15 @@ function InvoiceListView({
                 >
                   編集
                 </button>
+                {inv.status !== "paid" && (
+                  <button
+                    onClick={() => handleMarkPaid(inv)}
+                    aria-label={`${inv.invoiceNumber}を入金済にする`}
+                    className="px-3 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 font-medium"
+                  >
+                    入金済にする
+                  </button>
+                )}
                 <button
                   onClick={() => handleDuplicateInvoice(inv)}
                   aria-label={`${inv.invoiceNumber}を複製`}
@@ -1057,14 +1084,8 @@ function InvoiceEditor({
   const switchProfile = (profileId: string) => {
     const p = profiles.find((x) => x.id === profileId);
     if (!p) return;
-    // 既存の備考から旧振込先ブロックを置換
-    let newNotes = invoice.notes || "";
-    const bankBlockRe = /振込先:\n[\s\S]*?(?=\n\n|$)/;
-    if (bankBlockRe.test(newNotes)) {
-      newNotes = p.bankInfo ? newNotes.replace(bankBlockRe, `振込先:\n${p.bankInfo}`) : newNotes.replace(bankBlockRe, "").trim();
-    } else if (p.bankInfo && !newNotes.includes(p.bankInfo)) {
-      newNotes = newNotes ? `${newNotes}\n\n振込先:\n${p.bankInfo}` : `振込先:\n${p.bankInfo}`;
-    }
+    // 既存の備考から旧振込先ブロックがあれば除去（振込先は専用欄で表示するため）
+    const newNotes = (invoice.notes || "").replace(/振込先:\n[\s\S]*?(?=\n\n|$)/g, "").trim();
     // 非課税に切り替えた場合、全ての明細の税率を0にする
     const newItems = p.taxMode === "exempt"
       ? invoice.items.map((i) => ({ ...i, taxRate: 0 }))
@@ -1850,8 +1871,9 @@ function InvoicePreview({
     if (bankInfo) {
       msg += `\n--- 振込先 ---\n${bankInfo}\n`;
     }
-    if (invoice.notes) {
-      msg += `\n--- 備考 ---\n${invoice.notes}\n`;
+    const cleanNotes = stripBankFromNotes(invoice.notes);
+    if (cleanNotes) {
+      msg += `\n--- 備考 ---\n${cleanNotes}\n`;
     }
     msg += `\n${invoice.clinicName}`;
     if (invoice.clinicPhone) msg += `\nTEL: ${invoice.clinicPhone}`;
@@ -1890,6 +1912,15 @@ function InvoicePreview({
               <option value="sent">送付済</option>
               <option value="paid">入金済</option>
             </select>
+            {invoice.status !== "paid" && (
+              <button
+                onClick={() => onStatusChange("paid")}
+                aria-label="入金済にする"
+                className="px-4 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium"
+              >
+                入金済にする
+              </button>
+            )}
             <button
               onClick={onEdit}
               aria-label="請求書を編集"
@@ -2067,10 +2098,10 @@ function InvoicePreview({
           )}
 
           {/* Notes */}
-          {invoice.notes && (
+          {stripBankFromNotes(invoice.notes) && (
             <div className="mb-6">
               <p className="text-xs font-bold text-gray-600 mb-1">備考</p>
-              <p className="text-sm text-gray-600 whitespace-pre-line">{invoice.notes}</p>
+              <p className="text-sm text-gray-600 whitespace-pre-line">{stripBankFromNotes(invoice.notes)}</p>
             </div>
           )}
 
@@ -2242,10 +2273,10 @@ function BulkPrintView({
             <p className="text-sm whitespace-pre-line">{profile.bankInfo}</p>
           </div>
         )}
-        {invoice.notes && (
+        {stripBankFromNotes(invoice.notes) && (
           <div className="mb-4">
             <p className="text-xs font-bold text-gray-600 mb-1">備考</p>
-            <p className="text-sm text-gray-600 whitespace-pre-line">{invoice.notes}</p>
+            <p className="text-sm text-gray-600 whitespace-pre-line">{stripBankFromNotes(invoice.notes)}</p>
           </div>
         )}
       </>
