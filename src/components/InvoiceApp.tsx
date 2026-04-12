@@ -1758,7 +1758,8 @@ function InvoicePreview({
 
   const generatePDF = async (): Promise<{ blob: Blob; filename: string } | null> => {
     if (!printRef.current) return null;
-    const html2canvas = (await import("html2canvas")).default;
+    // html2canvas-pro は Tailwind v4 の oklch() カラー等に対応した fork
+    const html2canvas = (await import("html2canvas-pro")).default;
     const { jsPDF } = await import("jspdf");
 
     const canvas = await html2canvas(printRef.current, {
