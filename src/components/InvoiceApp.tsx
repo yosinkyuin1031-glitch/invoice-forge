@@ -1735,48 +1735,94 @@ function InvoicePreview({
     window.print();
   };
 
+  const generatePDF = async (): Promise<{ blob: Blob; filename: string } | null> => {
+    if (!printRef.current) return null;
+    const html2canvas = (await import("html2canvas")).default;
+    const { jsPDF } = await import("jspdf");
+
+    const canvas = await html2canvas(printRef.current, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    if (imgHeight <= pageHeight) {
+      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
+    } else {
+      let yOffset = 0;
+      while (yOffset < imgHeight) {
+        if (yOffset > 0) pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, -yOffset, imgWidth, imgHeight);
+        yOffset += pageHeight;
+      }
+    }
+
+    const filename = `請求書_${invoice.invoiceNumber}_${invoice.clientName || "取引先"}.pdf`;
+    const blob = pdf.output("blob");
+    return { blob, filename };
+  };
+
   const handleDownloadPDF = async () => {
-    if (!printRef.current) return;
     setPdfLoading(true);
     try {
-      const html2canvas = (await import("html2canvas")).default;
-      const { jsPDF } = await import("jspdf");
-
-      const canvas = await html2canvas(printRef.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      if (imgHeight <= pageHeight) {
-        pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
-      } else {
-        // 複数ページ対応
-        let yOffset = 0;
-        while (yOffset < imgHeight) {
-          if (yOffset > 0) pdf.addPage();
-          pdf.addImage(imgData, "PNG", 0, -yOffset, imgWidth, imgHeight);
-          yOffset += pageHeight;
-        }
-      }
-
-      const filename = `請求書_${invoice.invoiceNumber}_${invoice.clientName || "取引先"}.pdf`;
-      pdf.save(filename);
+      const result = await generatePDF();
+      if (!result) return;
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch {
       alert("PDFの生成に失敗しました。ブラウザ印刷をご利用ください。");
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleSharePDF = async () => {
+    setPdfLoading(true);
+    try {
+      const result = await generatePDF();
+      if (!result) return;
+      const file = new File([result.blob], result.filename, { type: "application/pdf" });
+      const text = buildMessageText();
+      const shareData: ShareData = {
+        title: `請求書 ${invoice.invoiceNumber}`,
+        text,
+        files: [file],
+      };
+      // Web Share API (mobile Safari/Chrome): opens native share sheet incl. LINE
+      if (typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share(shareData);
+        return;
+      }
+      // Fallback: download PDF + copy message text + open LINE
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      try {
+        await navigator.clipboard.writeText(text);
+        alert("PDFを保存しました。本文をクリップボードにコピーしたので、LINEを開いて添付＋貼り付けしてください。");
+      } catch {
+        alert("PDFを保存しました。LINEを開いて手動で添付してください。");
+      }
+    } catch (e) {
+      if ((e as Error)?.name !== "AbortError") {
+        alert("共有に失敗しました。PDF保存ボタンから手動で送信してください。");
+      }
     } finally {
       setPdfLoading(false);
     }
@@ -1867,11 +1913,19 @@ function InvoicePreview({
               印刷
             </button>
             <button
-              onClick={handleSendLINE}
-              aria-label="LINEで請求書を送信"
-              className="px-4 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium"
+              onClick={handleSharePDF}
+              disabled={pdfLoading}
+              aria-label="PDFを共有してLINEで送信"
+              className="px-4 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium disabled:opacity-50"
             >
-              LINEで送る
+              {pdfLoading ? "準備中..." : "LINEで送る（PDF）"}
+            </button>
+            <button
+              onClick={handleSendLINE}
+              aria-label="LINEで請求書のテキストを送信"
+              className="px-4 py-1.5 text-xs bg-green-100 text-green-700 rounded-lg hover:bg-green-200 font-medium"
+            >
+              LINE（本文のみ）
             </button>
             <button
               onClick={handleSendEmail}
