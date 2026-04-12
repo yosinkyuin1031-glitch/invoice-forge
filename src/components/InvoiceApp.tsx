@@ -1811,40 +1811,71 @@ function InvoicePreview({
     }
   };
 
-  const handleSharePDF = async () => {
+  const isMobileDevice = () => {
+    if (typeof navigator === "undefined") return false;
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  };
+
+  // 1) スマホ: ネイティブ共有シートでLINE選択（Web Share API + files）
+  // 2) PC: PDFを保存＋本文をコピー＋LINEを開く（line://→LINE Mac/Web）
+  const handleSendToLINE = async () => {
     setPdfLoading(true);
     try {
       const result = await generatePDF();
-      if (!result) return;
-      const file = new File([result.blob], result.filename, { type: "application/pdf" });
-      const text = buildMessageText();
-      const shareData: ShareData = {
-        title: `請求書 ${invoice.invoiceNumber}`,
-        text,
-        files: [file],
-      };
-      // Web Share API (mobile Safari/Chrome): opens native share sheet incl. LINE
-      if (typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share(shareData);
+      if (!result) {
+        alert("PDFの生成に失敗しました");
         return;
       }
-      // Fallback: download PDF + copy message text + open LINE
+      const text = buildMessageText();
+
+      // --- スマホ: ネイティブ共有シート ---
+      if (isMobileDevice()) {
+        const file = new File([result.blob], result.filename, { type: "application/pdf" });
+        if (typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({
+              title: `請求書 ${invoice.invoiceNumber}`,
+              text,
+              files: [file],
+            });
+            return;
+          } catch (e) {
+            if ((e as Error)?.name === "AbortError") return;
+          }
+        }
+      }
+
+      // --- PC または共有失敗: PDF保存 + 本文コピー + LINEを開く ---
+      // 1. PDF保存
       const url = URL.createObjectURL(result.blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = result.filename;
       a.click();
       URL.revokeObjectURL(url);
+
+      // 2. 本文コピー
+      let copied = false;
       try {
         await navigator.clipboard.writeText(text);
-        alert("PDFを保存しました。本文をクリップボードにコピーしたので、LINEを開いて添付＋貼り付けしてください。");
+        copied = true;
       } catch {
-        alert("PDFを保存しました。LINEを開いて手動で添付してください。");
+        /* noop */
       }
-    } catch (e) {
-      if ((e as Error)?.name !== "AbortError") {
-        alert("共有に失敗しました。PDF保存ボタンから手動で送信してください。");
+
+      // 3. LINEを開く（Macの場合はline://でLINE for Macが開く、ダメならLINE Webへ）
+      const ok = window.confirm(
+        `PDFを保存しました${copied ? "／本文をコピーしました" : ""}。\n\nOK: LINE for Macを開きます（PDFをドラッグ＆本文を貼り付けて送信）\nキャンセル: LINE Webを開きます`,
+      );
+      if (ok) {
+        // line:// スキームでLINE for Macを起動
+        window.location.href = "line://";
+      } else {
+        // LINE Web
+        window.open("https://web.line.me/", "_blank");
       }
+    } catch {
+      alert("処理に失敗しました。PDF保存ボタンから手動で送信してください。");
     } finally {
       setPdfLoading(false);
     }
@@ -1880,11 +1911,6 @@ function InvoicePreview({
     if (invoice.clinicPhone) msg += `\nTEL: ${invoice.clinicPhone}`;
     if (invoice.clinicEmail) msg += `\nEmail: ${invoice.clinicEmail}`;
     return msg;
-  };
-
-  const handleSendLINE = () => {
-    const text = encodeURIComponent(buildMessageText());
-    window.location.href = `line://msg/text/${text}`;
   };
 
   const handleSendEmail = () => {
@@ -1945,19 +1971,12 @@ function InvoicePreview({
               印刷
             </button>
             <button
-              onClick={handleSharePDF}
+              onClick={handleSendToLINE}
               disabled={pdfLoading}
-              aria-label="PDFを共有してLINEで送信"
+              aria-label="LINEで請求書を送信"
               className="px-4 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium disabled:opacity-50"
             >
-              {pdfLoading ? "準備中..." : "LINEで送る（PDF）"}
-            </button>
-            <button
-              onClick={handleSendLINE}
-              aria-label="LINEで請求書のテキストを送信"
-              className="px-4 py-1.5 text-xs bg-green-100 text-green-700 rounded-lg hover:bg-green-200 font-medium"
-            >
-              LINE（本文のみ）
+              {pdfLoading ? "準備中..." : "LINEで送る"}
             </button>
             <button
               onClick={handleSendEmail}
