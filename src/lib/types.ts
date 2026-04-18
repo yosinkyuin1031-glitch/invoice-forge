@@ -29,6 +29,9 @@ export interface Invoice {
   clientEmail: string;
   // 明細
   items: InvoiceItem[];
+  // 送料
+  showShipping: boolean;
+  shippingFee: number;
   // 備考
   notes: string;
   // メタ

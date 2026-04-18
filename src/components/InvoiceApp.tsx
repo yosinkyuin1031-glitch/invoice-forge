@@ -156,6 +156,8 @@ export default function InvoiceApp() {
       clientAddress: "",
       clientEmail: "",
       items: [{ id: `item-${Date.now()}`, name: "", quantity: 1, unitPrice: 0, taxRate: defaultTaxRate }],
+      showShipping: false,
+      shippingFee: 0,
       notes: "",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -310,6 +312,8 @@ export default function InvoiceApp() {
           unitPrice: item.unit_price,
           taxRate: defaultTaxRate,
         })),
+        showShipping: false,
+        shippingFee: 0,
         notes: `EC注文: ${order.id}`,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
@@ -338,7 +342,7 @@ export default function InvoiceApp() {
     items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
   const calcTax = (items: InvoiceItem[]) =>
     items.reduce((sum, i) => sum + Math.floor(i.quantity * i.unitPrice * i.taxRate), 0);
-  const calcTotal = (items: InvoiceItem[]) => calcSubtotal(items) + calcTax(items);
+  const calcTotal = (items: InvoiceItem[], shippingFee = 0) => calcSubtotal(items) + calcTax(items) + shippingFee;
   const formatCurrency = (n: number) => `${n.toLocaleString()}円`;
 
   // Auth loading
@@ -818,7 +822,7 @@ function InvoiceListView({
   handleDuplicateInvoice: (inv: Invoice) => void;
   handleDeleteInvoice: (id: string) => void;
   handleMarkPaid: (inv: Invoice) => void;
-  calcTotal: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[], shippingFee?: number) => number;
   formatCurrency: (n: number) => string;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
@@ -930,7 +934,7 @@ function InvoiceListView({
             {formatCurrency(
               invoices
                 .filter((i) => i.status === "paid" && i.issueDate.startsWith(thisMonth))
-                .reduce((sum, i) => sum + calcTotal(i.items), 0)
+                .reduce((sum, i) => sum + calcTotal(i.items, i.showShipping ? i.shippingFee : 0), 0)
             )}
           </p>
         </div>
@@ -993,7 +997,7 @@ function InvoiceListView({
                 </span>
               </div>
               <p className="text-lg font-bold text-gray-800 mb-3">
-                {formatCurrency(calcTotal(inv.items))}
+                {formatCurrency(calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0))}
               </p>
               <div className="flex gap-2 flex-wrap">
                 <button
@@ -1071,7 +1075,7 @@ function InvoiceEditor({
   onCancel: () => void;
   calcSubtotal: (items: InvoiceItem[]) => number;
   calcTax: (items: InvoiceItem[]) => number;
-  calcTotal: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[], shippingFee?: number) => number;
   formatCurrency: (n: number) => string;
   isNew: boolean;
   userId: string;
@@ -1679,6 +1683,38 @@ function InvoiceEditor({
             ))}
           </div>
 
+          {/* Shipping */}
+          <div className="mt-4 pt-3 border-t">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-700">送料</label>
+              <button
+                type="button"
+                onClick={() => updateField("showShipping", !invoice.showShipping)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  invoice.showShipping ? "bg-blue-600" : "bg-gray-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    invoice.showShipping ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+            {invoice.showShipping && (
+              <div>
+                <input
+                  type="number"
+                  min={0}
+                  value={invoice.shippingFee}
+                  onChange={(e) => updateField("shippingFee", parseInt(e.target.value) || 0)}
+                  placeholder="送料（円）"
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+            )}
+          </div>
+
           {/* Totals */}
           <div className="mt-4 pt-3 border-t space-y-1">
             {!taxExempt && (
@@ -1693,9 +1729,15 @@ function InvoiceEditor({
                 </div>
               </>
             )}
+            {invoice.showShipping && invoice.shippingFee > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">送料</span>
+                <span>{formatCurrency(invoice.shippingFee)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-lg font-bold">
               <span>合計{taxExempt ? "（非課税）" : ""}</span>
-              <span className="text-blue-600">{formatCurrency(calcTotal(invoice.items))}</span>
+              <span className="text-blue-600">{formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}</span>
             </div>
           </div>
         </div>
@@ -1740,7 +1782,7 @@ function InvoicePreview({
   profile: BusinessProfile;
   calcSubtotal: (items: InvoiceItem[]) => number;
   calcTax: (items: InvoiceItem[]) => number;
-  calcTotal: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[], shippingFee?: number) => number;
   formatCurrency: (n: number) => string;
   onBack: () => void;
   onEdit: () => void;
@@ -1885,7 +1927,7 @@ function InvoicePreview({
     const items = invoice.items
       .map((item) => `・${item.name}　${item.quantity}点 × ${item.unitPrice.toLocaleString()}円 = ${(item.quantity * item.unitPrice).toLocaleString()}円`)
       .join("\n");
-    const total = calcTotal(invoice.items);
+    const total = calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0);
     const subtotal = calcSubtotal(invoice.items);
     const tax = calcTax(invoice.items);
 
@@ -1898,6 +1940,9 @@ function InvoicePreview({
     if (!taxExempt) {
       msg += `小計: ${subtotal.toLocaleString()}円\n`;
       msg += `消費税: ${tax.toLocaleString()}円\n`;
+    }
+    if (invoice.showShipping && invoice.shippingFee > 0) {
+      msg += `送料: ${invoice.shippingFee.toLocaleString()}円\n`;
     }
     msg += `合計${taxExempt ? "（非課税）" : ""}: ${total.toLocaleString()}円\n`;
     if (bankInfo) {
@@ -2015,7 +2060,7 @@ function InvoicePreview({
               <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
                 <p className="text-sm text-gray-600">ご請求金額</p>
                 <p className="text-2xl font-bold text-blue-700">
-                  {formatCurrency(calcTotal(invoice.items))}
+                  {formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}
                 </p>
               </div>
             </div>
@@ -2102,9 +2147,15 @@ function InvoicePreview({
                   </div>
                 </>
               )}
+              {invoice.showShipping && invoice.shippingFee > 0 && (
+                <div className="flex justify-between py-1 text-sm">
+                  <span className="text-gray-500">送料</span>
+                  <span>{formatCurrency(invoice.shippingFee)}</span>
+                </div>
+              )}
               <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-gray-800 mt-1">
                 <span>合計{taxExempt ? "（非課税）" : ""}</span>
-                <span>{formatCurrency(calcTotal(invoice.items))}</span>
+                <span>{formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}</span>
               </div>
             </div>
           </div>
@@ -2143,7 +2194,7 @@ function InvoicePreview({
                   <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
                     <p className="text-sm text-gray-600">領収金額</p>
                     <p className="text-2xl font-bold text-blue-700">
-                      {formatCurrency(calcTotal(invoice.items))}
+                      {formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}
                     </p>
                     {taxExempt && <p className="text-xs text-gray-500 mt-1">（非課税）</p>}
                   </div>
@@ -2201,7 +2252,7 @@ function BulkPrintView({
   mode: BulkPrintMode;
   calcSubtotal: (items: InvoiceItem[]) => number;
   calcTax: (items: InvoiceItem[]) => number;
-  calcTotal: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[], shippingFee?: number) => number;
   formatCurrency: (n: number) => string;
   onBack: () => void;
 }) {
@@ -2229,7 +2280,7 @@ function BulkPrintView({
             {invoice.clientAddress && <p className="text-xs text-gray-500">{invoice.clientAddress}</p>}
             <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
               <p className="text-sm text-gray-600">ご請求金額</p>
-              <p className="text-2xl font-bold text-blue-700">{formatCurrency(calcTotal(invoice.items))}</p>
+              <p className="text-2xl font-bold text-blue-700">{formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}</p>
             </div>
           </div>
           <div className="text-right">
@@ -2281,9 +2332,12 @@ function BulkPrintView({
                 <div className="flex justify-between py-1 text-sm"><span className="text-gray-500">消費税</span><span>{formatCurrency(calcTax(invoice.items))}</span></div>
               </>
             )}
+            {invoice.showShipping && invoice.shippingFee > 0 && (
+              <div className="flex justify-between py-1 text-sm"><span className="text-gray-500">送料</span><span>{formatCurrency(invoice.shippingFee)}</span></div>
+            )}
             <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-gray-800 mt-1">
               <span>合計{taxExempt ? "（非課税）" : ""}</span>
-              <span>{formatCurrency(calcTotal(invoice.items))}</span>
+              <span>{formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}</span>
             </div>
           </div>
         </div>
@@ -2321,7 +2375,7 @@ function BulkPrintView({
             </div>
             <div className="mt-4 p-4 bg-blue-50 rounded-lg inline-block">
               <p className="text-sm text-gray-600">領収金額</p>
-              <p className="text-2xl font-bold text-blue-700">{formatCurrency(calcTotal(invoice.items))}</p>
+              <p className="text-2xl font-bold text-blue-700">{formatCurrency(calcTotal(invoice.items, invoice.showShipping ? invoice.shippingFee : 0))}</p>
               {taxExempt && <p className="text-xs text-gray-500 mt-1">（非課税）</p>}
             </div>
           </div>
@@ -2431,7 +2485,7 @@ function ClientsView({
   invoices: Invoice[];
   userId: string;
   onReload: () => Promise<void>;
-  calcTotal: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[], shippingFee?: number) => number;
   formatCurrency: (n: number) => string;
   showSuccess: (msg: string) => void;
   showError: (msg: string) => void;
@@ -2667,14 +2721,14 @@ function ClientsView({
                     }`}>
                       {inv.status === "paid" ? "入金済" : inv.status === "sent" ? "送付済" : "下書き"}
                     </span>
-                    <span className="font-bold">{formatCurrency(calcTotal(inv.items))}</span>
+                    <span className="font-bold">{formatCurrency(calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0))}</span>
                   </div>
                 </div>
               ))}
               <div className="pt-2 border-t text-sm text-right">
                 <span className="text-gray-500">合計: </span>
                 <span className="font-bold">
-                  {formatCurrency(clientInvoices.reduce((s, inv) => s + calcTotal(inv.items), 0))}
+                  {formatCurrency(clientInvoices.reduce((s, inv) => s + calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0), 0))}
                 </span>
               </div>
             </div>
@@ -2978,7 +3032,7 @@ function AnalyticsView({
   invoices: Invoice[];
   clients: Client[];
   products: Product[];
-  calcTotal: (items: InvoiceItem[]) => number;
+  calcTotal: (items: InvoiceItem[], shippingFee?: number) => number;
   formatCurrency: (n: number) => string;
 }) {
   const now = new Date();
@@ -2993,8 +3047,8 @@ function AnalyticsView({
     const monthInvoices = invoices.filter((inv) => inv.issueDate.startsWith(m));
     monthlyData.push({
       month: `${d.getMonth() + 1}月`,
-      total: monthInvoices.reduce((s, inv) => s + calcTotal(inv.items), 0),
-      paid: monthInvoices.filter((inv) => inv.status === "paid").reduce((s, inv) => s + calcTotal(inv.items), 0),
+      total: monthInvoices.reduce((s, inv) => s + calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0), 0),
+      paid: monthInvoices.filter((inv) => inv.status === "paid").reduce((s, inv) => s + calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0), 0),
     });
   }
   const maxMonthly = Math.max(...monthlyData.map((d) => d.total), 1);
@@ -3002,10 +3056,10 @@ function AnalyticsView({
   // This month vs last month
   const thisMonthTotal = invoices
     .filter((inv) => inv.issueDate.startsWith(thisMonth))
-    .reduce((s, inv) => s + calcTotal(inv.items), 0);
+    .reduce((s, inv) => s + calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0), 0);
   const lastMonthTotal = invoices
     .filter((inv) => inv.issueDate.startsWith(lastMonth))
-    .reduce((s, inv) => s + calcTotal(inv.items), 0);
+    .reduce((s, inv) => s + calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0), 0);
   const monthDiff = lastMonthTotal > 0 ? Math.round(((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100) : 0;
 
   // Client ranking
@@ -3013,7 +3067,7 @@ function AnalyticsView({
   invoices.forEach((inv) => {
     const key = inv.clientName || "（取引先名なし）";
     if (!clientTotals[key]) clientTotals[key] = { name: key, total: 0 };
-    clientTotals[key].total += calcTotal(inv.items);
+    clientTotals[key].total += calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0);
   });
   const clientRanking = Object.values(clientTotals).sort((a, b) => b.total - a.total).slice(0, 10);
 
@@ -3036,9 +3090,9 @@ function AnalyticsView({
     paid: invoices.filter((i) => i.status === "paid").length,
   };
   const statusTotals = {
-    draft: invoices.filter((i) => i.status === "draft").reduce((s, i) => s + calcTotal(i.items), 0),
-    sent: invoices.filter((i) => i.status === "sent").reduce((s, i) => s + calcTotal(i.items), 0),
-    paid: invoices.filter((i) => i.status === "paid").reduce((s, i) => s + calcTotal(i.items), 0),
+    draft: invoices.filter((i) => i.status === "draft").reduce((s, i) => s + calcTotal(i.items, i.showShipping ? i.shippingFee : 0), 0),
+    sent: invoices.filter((i) => i.status === "sent").reduce((s, i) => s + calcTotal(i.items, i.showShipping ? i.shippingFee : 0), 0),
+    paid: invoices.filter((i) => i.status === "paid").reduce((s, i) => s + calcTotal(i.items, i.showShipping ? i.shippingFee : 0), 0),
   };
 
   // Overdue invoices
@@ -3209,7 +3263,7 @@ function AnalyticsView({
                       <span className="text-red-600 ml-2">{daysOverdue}日超過</span>
                     </p>
                   </div>
-                  <span className="font-bold text-red-700">{formatCurrency(calcTotal(inv.items))}</span>
+                  <span className="font-bold text-red-700">{formatCurrency(calcTotal(inv.items, inv.showShipping ? inv.shippingFee : 0))}</span>
                 </div>
               );
             })}
